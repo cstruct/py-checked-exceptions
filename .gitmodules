@@ -1,0 +1,4 @@
+[submodule "ruff"]
+	path = ruff
+	url = git@github.com:cstruct/ruff.git
+	branch = "py-checked-exception"
