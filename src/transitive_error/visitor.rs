@@ -38,7 +38,7 @@ pub(crate) struct FunctionTransitiveErrorVisitor<'a> {
     target_exceptions: &'a Vec<String>,
     errors: Vec<FunctionRaise>,
     call_stack: CallStack,
-    exception_capture_stack: &'a ExceptionCaptureStack,
+    exception_capture_stack: ExceptionCaptureStack,
     try_block_exceptions: Vec<Vec<String>>,
 }
 
@@ -58,7 +58,7 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
             target_exceptions,
             errors: vec![],
             call_stack,
-            exception_capture_stack,
+            exception_capture_stack: exception_capture_stack.clone(),
             try_block_exceptions: vec![],
         }
     }
@@ -170,7 +170,7 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                 .flat_map(extract_caught_exceptions)
                 .collect::<Vec<_>>();
 
-            self.exception_capture_stack.push(caught_exceptions.clone());
+            self.exception_capture_stack = self.exception_capture_stack.push(caught_exceptions.clone());
 
             let mut filtered_errors = Vec::new();
             for (idx, error) in self.errors.iter().enumerate() {
@@ -182,15 +182,15 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
             self.errors = filtered_errors;
 
             self.try_block_exceptions.push(try_exceptions);
-            self.exception_capture_stack.pop();
+            self.exception_capture_stack = self.exception_capture_stack.pop();
 
             for handler in handlers {
                 if let Some(except_handler) = handler.as_except_handler() {
                     let handler_exceptions = extract_caught_exceptions(handler);
-                    self.exception_capture_stack
+                    self.exception_capture_stack = self.exception_capture_stack
                         .push_handler_exceptions(handler_exceptions);
                     self.visit_body(&except_handler.body);
-                    self.exception_capture_stack.pop_handler_exceptions();
+                    self.exception_capture_stack = self.exception_capture_stack.pop_handler_exceptions();
                 }
             }
             self.try_block_exceptions.pop();
@@ -230,10 +230,10 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                             call.range,
                             definition_file,
                             def,
-                            self.target_exceptions,
+                            self.target_exceptions.clone(),
                             self.call_stack.clone(),
-                            self.exception_capture_stack,
-                        );
+                            self.exception_capture_stack.clone(),
+                        ).to_vec();
                         self.errors.extend(
                             transitive_errors
                                 .into_iter()

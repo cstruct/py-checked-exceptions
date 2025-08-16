@@ -19,16 +19,16 @@ use crate::{
 };
 
 #[allow(clippy::too_many_arguments)]
-#[salsa::tracked(returns(clone), no_eq, heap_size=ruff_memory_usage::heap_size)]
+#[salsa::tracked(returns(deref), no_eq, heap_size=ruff_memory_usage::heap_size)]
 pub(crate) fn extract_errors<'db>(
     db: &'db dyn Db,
     expr_file: File,
     expr_range: TextRange,
     definition_file: File,
     definition: Definition<'db>,
-    target_exceptions: &'db Vec<String>,
+    target_exceptions: Vec<String>,
     call_stack: CallStack,
-    exception_capture_stack: &'db ExceptionCaptureStack,
+    exception_capture_stack: ExceptionCaptureStack,
 ) -> Vec<FunctionRaise> {
     let module = parsed_module(db, definition_file).load(db);
     let Some((definition_file, definition)) =
@@ -52,9 +52,9 @@ pub(crate) fn extract_errors<'db>(
             db,
             definition_file,
             func_def,
-            target_exceptions,
+            &target_exceptions,
             new_stack,
-            exception_capture_stack,
+            &exception_capture_stack,
         );
         let transitive_errors = transitive_errors
             .iter()
