@@ -48,8 +48,9 @@ impl<'a> ModuleCollector<'a> {
         def: &'a StmtFunctionDef,
     ) -> (Vec<TextRange>, Vec<&'a StmtFunctionDef>) {
         if let Some((overload_name, ..)) = &self.overloads
-            && overload_name != &def.name {
-                self.overloads = None
+            && overload_name != &def.name
+        {
+            self.overloads = None
         }
         if def.decorator_list.iter().any(|d| {
             d.expression

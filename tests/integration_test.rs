@@ -67,6 +67,15 @@ fn test_target_exception() -> Result<()> {
     )
 }
 
+#[test]
+fn test_except() -> Result<()> {
+    assert_diagnostics(
+        "except.py",
+        None,
+        vec![("Raises TypeError", (16, 13), (16, 30))],
+    )
+}
+
 fn assert_diagnostics(
     test_file: &str,
     target_exception: Option<String>,

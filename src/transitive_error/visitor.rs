@@ -1,23 +1,34 @@
 use itertools::Itertools;
 use ruff_db::files::File;
 use ruff_python_ast::visitor::{Visitor, walk_expr, walk_stmt};
-use ruff_python_ast::{Expr, ExprAttribute, ExprCall, ExprSubscript, Stmt, StmtFunctionDef};
+use ruff_python_ast::{
+    Expr, ExprAttribute, ExprCall, ExprSubscript, Stmt, StmtFunctionDef, StmtTry,
+};
 use ty_project::Db;
 use ty_python_semantic::{ResolvedDefinition, definitions_for_attribute, definitions_for_name};
 
-use crate::transitive_error::extract::extract_errors;
+use crate::transitive_error::call_stack::CallStack;
+use crate::transitive_error::capture_stack::ExceptionCaptureStack;
+use crate::transitive_error::extract::{extract_caught_exceptions, extract_errors};
 use crate::transitive_error::raise::FunctionRaise;
-use crate::transitive_error::stack::CallStack;
 
 pub(crate) fn get_transitive_errors<'a>(
     db: &'a dyn Db,
     file: File,
     func: &'a StmtFunctionDef,
     target_exceptions: &Vec<String>,
-    stack: CallStack,
+    call_stack: CallStack,
+    exception_capture_stack: &'a mut ExceptionCaptureStack,
 ) -> Vec<FunctionRaise> {
-    FunctionTransitiveErrorVisitor::new(db, file, func, target_exceptions, stack)
-        .transitive_errors()
+    FunctionTransitiveErrorVisitor::new(
+        db,
+        file,
+        func,
+        target_exceptions,
+        call_stack,
+        exception_capture_stack,
+    )
+    .transitive_errors()
 }
 
 pub(crate) struct FunctionTransitiveErrorVisitor<'a> {
@@ -26,7 +37,8 @@ pub(crate) struct FunctionTransitiveErrorVisitor<'a> {
     func: &'a StmtFunctionDef,
     target_exceptions: &'a Vec<String>,
     errors: Vec<FunctionRaise>,
-    stack: CallStack,
+    call_stack: CallStack,
+    exception_capture_stack: &'a mut ExceptionCaptureStack,
 }
 
 impl<'a> FunctionTransitiveErrorVisitor<'a> {
@@ -35,7 +47,8 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
         file: File,
         func: &'a StmtFunctionDef,
         target_exceptions: &'a Vec<String>,
-        stack: CallStack,
+        call_stack: CallStack,
+        exception_capture_stack: &'a mut ExceptionCaptureStack,
     ) -> Self {
         Self {
             db,
@@ -43,7 +56,8 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
             func,
             target_exceptions,
             errors: vec![],
-            stack,
+            call_stack,
+            exception_capture_stack,
         }
     }
 
@@ -67,11 +81,36 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
         if let Stmt::Raise(raise) = stmt
             && let Some(name) = try_extract_call_target_name(raise.exc.as_deref())
             && (self.target_exceptions.is_empty() || self.target_exceptions.contains(&name))
+            && !self.exception_capture_stack.is_captured(&name)
         {
             self.errors
                 .extend_one(FunctionRaise::direct(self.file, name, raise.range));
+            walk_stmt(self, stmt);
+        } else if let Stmt::Try(StmtTry {
+            body,
+            handlers,
+            orelse,
+            finalbody,
+            ..
+        }) = stmt
+        {
+            let caught_exceptions = handlers
+                .iter()
+                .flat_map(extract_caught_exceptions)
+                .collect::<Vec<_>>();
+            self.exception_capture_stack.push(caught_exceptions);
+            self.visit_body(body);
+            self.exception_capture_stack.pop();
+            for handler in handlers {
+                if let Some(except_handler) = handler.as_except_handler() {
+                    self.visit_body(&except_handler.body);
+                }
+            }
+            self.visit_body(orelse);
+            self.visit_body(finalbody);
+        } else {
+            walk_stmt(self, stmt);
         }
-        walk_stmt(self, stmt);
     }
 
     fn visit_expr(&mut self, expr: &'a Expr) {
@@ -88,19 +127,25 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                         }
                         if let Some(name) = def.name(self.db) {
                             let key = (definition_file.path(self.db).as_str().into(), name);
-                            if self.stack.contains(&key) {
+                            if self.call_stack.contains(&key) {
                                 continue;
                             }
                         }
-                        self.errors.extend(extract_errors(
+                        let transitive_errors = extract_errors(
                             self.db,
                             self.file,
                             call.range,
                             definition_file,
                             def,
                             self.target_exceptions,
-                            self.stack.clone(),
-                        ))
+                            self.call_stack.clone(),
+                            self.exception_capture_stack,
+                        );
+                        self.errors.extend(
+                            transitive_errors
+                                .into_iter()
+                                .filter(|e| !self.exception_capture_stack.is_captured(e.name())),
+                        )
                     }
                 }
             }

@@ -62,6 +62,12 @@ impl FunctionRaise {
             }
         }
     }
+    pub(crate) fn name(&self) -> &String {
+        match self {
+            FunctionRaise::Direct(r) => &r.name,
+            FunctionRaise::Transitive(r) => &r.name,
+        }
+    }
 }
 
 impl From<FunctionRaise> for Diagnostic {

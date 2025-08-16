@@ -2,6 +2,7 @@ use ruff_db::{
     files::File,
     parsed::{ParsedModuleRef, parsed_module},
 };
+use ruff_python_ast::{ExceptHandler, Expr, ExprName, ExprTuple};
 use ruff_text_size::{Ranged, TextRange};
 use ty_project::Db;
 use ty_python_semantic::{
@@ -11,9 +12,13 @@ use ty_python_semantic::{
 
 use crate::{
     module::ModuleCollector,
-    transitive_error::{raise::FunctionRaise, stack::CallStack, visitor::get_transitive_errors},
+    transitive_error::{
+        call_stack::CallStack, capture_stack::ExceptionCaptureStack, raise::FunctionRaise,
+        visitor::get_transitive_errors,
+    },
 };
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn extract_errors<'db>(
     db: &'db dyn Db,
     expr_file: File,
@@ -21,7 +26,8 @@ pub(crate) fn extract_errors<'db>(
     definition_file: File,
     definition: Definition<'db>,
     target_exceptions: &'db Vec<String>,
-    stack: CallStack,
+    call_stack: CallStack,
+    exception_capture_stack: &'db mut ExceptionCaptureStack,
 ) -> Vec<FunctionRaise> {
     let module = parsed_module(db, definition_file).load(db);
     let (definition_file, definition) = resolve_alias(db, &module, definition_file, definition);
@@ -33,18 +39,43 @@ pub(crate) fn extract_errors<'db>(
     let mut errors = vec![];
 
     for func_def in module_collector.find_functions(&full_range.range()) {
-        let new_stack = stack.push((
+        let new_stack = call_stack.push((
             definition_file.path(db).as_str().into(),
             func_def.name.as_str().into(),
         ));
-        let transitive_errors =
-            get_transitive_errors(db, definition_file, func_def, target_exceptions, new_stack);
+        let transitive_errors = get_transitive_errors(
+            db,
+            definition_file,
+            func_def,
+            target_exceptions,
+            new_stack,
+            exception_capture_stack,
+        );
         let transitive_errors = transitive_errors
             .iter()
             .map(|e| e.transitive(expr_file, expr_range));
         errors.extend(transitive_errors);
     }
     errors
+}
+
+pub(crate) fn extract_caught_exceptions(handler: &ExceptHandler) -> Vec<String> {
+    let Some(handler) = handler.as_except_handler() else {
+        return vec![];
+    };
+    let Some(ref type_) = handler.type_ else {
+        return vec![];
+    };
+    if let Expr::Name(ExprName { id, .. }) = &**type_ {
+        return vec![id.to_string()];
+    } else if let Expr::Tuple(ExprTuple { elts, .. }) = &**type_ {
+        return elts
+            .iter()
+            .flat_map(|e| e.as_name_expr())
+            .map(|n| n.id.to_string())
+            .collect();
+    }
+    vec![]
 }
 
 fn resolve_alias<'a>(
