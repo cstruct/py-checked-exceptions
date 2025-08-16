@@ -1687,6 +1687,7 @@ checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 [[package]]
 name = "ruff_annotate_snippets"
 version = "0.1.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "anstyle",
  "memchr",
@@ -1696,6 +1697,7 @@ dependencies = [
 [[package]]
 name = "ruff_cache"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "filetime",
  "glob",
@@ -1708,6 +1710,7 @@ dependencies = [
 [[package]]
 name = "ruff_db"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "anstyle",
  "arc-swap",
@@ -1746,6 +1749,7 @@ dependencies = [
 [[package]]
 name = "ruff_diagnostics"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "get-size2",
  "is-macro",
@@ -1756,6 +1760,7 @@ dependencies = [
 [[package]]
 name = "ruff_index"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "get-size2",
  "ruff_macros",
@@ -1765,6 +1770,7 @@ dependencies = [
 [[package]]
 name = "ruff_linter"
 version = "0.12.8"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -1822,6 +1828,7 @@ dependencies = [
 [[package]]
 name = "ruff_macros"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "heck",
  "itertools 0.14.0",
@@ -1834,6 +1841,7 @@ dependencies = [
 [[package]]
 name = "ruff_memory_usage"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "get-size2",
  "ordermap",
@@ -1842,6 +1850,7 @@ dependencies = [
 [[package]]
 name = "ruff_notebook"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "anyhow",
  "itertools 0.14.0",
@@ -1859,10 +1868,12 @@ dependencies = [
 [[package]]
 name = "ruff_options_metadata"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 
 [[package]]
 name = "ruff_python_ast"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "aho-corasick",
  "bitflags 2.9.1",
@@ -1885,6 +1896,7 @@ dependencies = [
 [[package]]
 name = "ruff_python_codegen"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "ruff_python_ast",
  "ruff_python_literal",
@@ -1896,6 +1908,7 @@ dependencies = [
 [[package]]
 name = "ruff_python_index"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "ruff_python_ast",
  "ruff_python_parser",
@@ -1907,6 +1920,7 @@ dependencies = [
 [[package]]
 name = "ruff_python_literal"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "bitflags 2.9.1",
  "itertools 0.14.0",
@@ -1917,6 +1931,7 @@ dependencies = [
 [[package]]
 name = "ruff_python_parser"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "bitflags 2.9.1",
  "bstr",
@@ -1936,6 +1951,7 @@ dependencies = [
 [[package]]
 name = "ruff_python_semantic"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "bitflags 2.9.1",
  "is-macro",
@@ -1953,6 +1969,7 @@ dependencies = [
 [[package]]
 name = "ruff_python_stdlib"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "bitflags 2.9.1",
  "unicode-ident",
@@ -1961,6 +1978,7 @@ dependencies = [
 [[package]]
 name = "ruff_python_trivia"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "itertools 0.14.0",
  "ruff_source_file",
@@ -1971,6 +1989,7 @@ dependencies = [
 [[package]]
 name = "ruff_source_file"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "get-size2",
  "memchr",
@@ -1981,6 +2000,7 @@ dependencies = [
 [[package]]
 name = "ruff_text_size"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "get-size2",
  "serde",
@@ -2459,6 +2479,7 @@ dependencies = [
 [[package]]
 name = "ty_combine"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "ordermap",
  "ruff_db",
@@ -2469,6 +2490,7 @@ dependencies = [
 [[package]]
 name = "ty_ide"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "bitflags 2.9.1",
  "itertools 0.14.0",
@@ -2489,6 +2511,7 @@ dependencies = [
 [[package]]
 name = "ty_project"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "anyhow",
  "camino",
@@ -2523,6 +2546,7 @@ dependencies = [
 [[package]]
 name = "ty_python_semantic"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "anyhow",
  "bitflags 2.9.1",
@@ -2566,6 +2590,7 @@ dependencies = [
 [[package]]
 name = "ty_static"
 version = "0.0.1"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "ruff_macros",
 ]
@@ -2573,6 +2598,7 @@ dependencies = [
 [[package]]
 name = "ty_vendored"
 version = "0.0.0"
+source = "git+https://github.com/cstruct/ruff.git?rev=9d081b0df6bb1d514252ca91d037cfca1ee061a8#9d081b0df6bb1d514252ca91d037cfca1ee061a8"
 dependencies = [
  "path-slash",
  "ruff_db",
