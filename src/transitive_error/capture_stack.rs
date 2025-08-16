@@ -1,37 +1,37 @@
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct ExceptionCaptureStack {
-    inner: Vec<Vec<String>>,
+    try_except_capture_stack: Vec<Vec<String>>,
     current_handler_exceptions: Vec<Vec<String>>,
 }
 
 impl ExceptionCaptureStack {
     pub(crate) fn new() -> Self {
         Self {
-            inner: Vec::new(),
+            try_except_capture_stack: Vec::new(),
             current_handler_exceptions: Vec::new(),
         }
     }
 
     pub(crate) fn push(&self, captured_exceptions: Vec<String>) -> Self {
-        let mut new_inner = self.inner.clone();
+        let mut new_inner = self.try_except_capture_stack.clone();
         new_inner.push(captured_exceptions);
         Self {
-            inner: new_inner,
+            try_except_capture_stack: new_inner,
             current_handler_exceptions: self.current_handler_exceptions.clone(),
         }
     }
 
     pub(crate) fn pop(&self) -> Self {
-        let mut new_inner = self.inner.clone();
+        let mut new_inner = self.try_except_capture_stack.clone();
         new_inner.pop();
         Self {
-            inner: new_inner,
+            try_except_capture_stack: new_inner,
             current_handler_exceptions: self.current_handler_exceptions.clone(),
         }
     }
 
     pub(crate) fn is_captured(&self, error: &String) -> bool {
-        self.inner
+        self.try_except_capture_stack
             .iter()
             .any(|es| es.iter().any(|e| e == "*ALL*" || e == error))
     }
@@ -40,7 +40,7 @@ impl ExceptionCaptureStack {
         let mut new_handler_exceptions = self.current_handler_exceptions.clone();
         new_handler_exceptions.push(exceptions);
         Self {
-            inner: self.inner.clone(),
+            try_except_capture_stack: self.try_except_capture_stack.clone(),
             current_handler_exceptions: new_handler_exceptions,
         }
     }
@@ -49,7 +49,7 @@ impl ExceptionCaptureStack {
         let mut new_handler_exceptions = self.current_handler_exceptions.clone();
         new_handler_exceptions.pop();
         Self {
-            inner: self.inner.clone(),
+            try_except_capture_stack: self.try_except_capture_stack.clone(),
             current_handler_exceptions: new_handler_exceptions,
         }
     }
