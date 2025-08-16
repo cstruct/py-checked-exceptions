@@ -18,7 +18,7 @@ pub(crate) fn get_transitive_errors<'a>(
     func: &'a StmtFunctionDef,
     target_exceptions: &Vec<String>,
     call_stack: CallStack,
-    exception_capture_stack: &'a mut ExceptionCaptureStack,
+    exception_capture_stack: &'a ExceptionCaptureStack,
 ) -> Vec<FunctionRaise> {
     FunctionTransitiveErrorVisitor::new(
         db,
@@ -38,7 +38,7 @@ pub(crate) struct FunctionTransitiveErrorVisitor<'a> {
     target_exceptions: &'a Vec<String>,
     errors: Vec<FunctionRaise>,
     call_stack: CallStack,
-    exception_capture_stack: &'a mut ExceptionCaptureStack,
+    exception_capture_stack: &'a ExceptionCaptureStack,
 }
 
 impl<'a> FunctionTransitiveErrorVisitor<'a> {
@@ -48,7 +48,7 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
         func: &'a StmtFunctionDef,
         target_exceptions: &'a Vec<String>,
         call_stack: CallStack,
-        exception_capture_stack: &'a mut ExceptionCaptureStack,
+        exception_capture_stack: &'a ExceptionCaptureStack,
     ) -> Self {
         Self {
             db,

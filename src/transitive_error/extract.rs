@@ -19,6 +19,7 @@ use crate::{
 };
 
 #[allow(clippy::too_many_arguments)]
+#[salsa::tracked(returns(clone), no_eq, heap_size=ruff_memory_usage::heap_size)]
 pub(crate) fn extract_errors<'db>(
     db: &'db dyn Db,
     expr_file: File,
@@ -27,7 +28,7 @@ pub(crate) fn extract_errors<'db>(
     definition: Definition<'db>,
     target_exceptions: &'db Vec<String>,
     call_stack: CallStack,
-    exception_capture_stack: &'db mut ExceptionCaptureStack,
+    exception_capture_stack: &'db ExceptionCaptureStack,
 ) -> Vec<FunctionRaise> {
     let module = parsed_module(db, definition_file).load(db);
     let (definition_file, definition) = resolve_alias(db, &module, definition_file, definition);
