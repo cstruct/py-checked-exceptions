@@ -66,7 +66,7 @@ pub(crate) fn extract_errors<'db>(
 
 #[allow(clippy::too_many_arguments)]
 #[salsa::tracked(returns(clone), no_eq, heap_size=ruff_memory_usage::heap_size)]
-pub(crate) fn extract_exception<'db>(
+pub fn extract_exception<'db>(
     db: &'db dyn Db,
     definition_file: File,
     definition: Definition<'db>,

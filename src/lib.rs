@@ -20,6 +20,7 @@ mod module;
 mod transitive_error;
 
 pub use transitive_error::exception::Exception;
+pub use transitive_error::extract::extract_exception;
 
 pub fn analyze_project(
     project_path: SystemPathBuf,
