@@ -39,6 +39,7 @@ pub(crate) struct FunctionTransitiveErrorVisitor<'a> {
     errors: Vec<FunctionRaise>,
     call_stack: CallStack,
     exception_capture_stack: &'a ExceptionCaptureStack,
+    try_block_exceptions: Vec<Vec<String>>,
 }
 
 impl<'a> FunctionTransitiveErrorVisitor<'a> {
@@ -58,6 +59,7 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
             errors: vec![],
             call_stack,
             exception_capture_stack,
+            try_block_exceptions: vec![],
         }
     }
 
@@ -78,13 +80,70 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
 
 impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
     fn visit_stmt(&mut self, stmt: &'a Stmt) {
-        if let Stmt::Raise(raise) = stmt
-            && let Some(name) = try_extract_call_target_name(raise.exc.as_deref())
-            && (self.target_exceptions.is_empty() || self.target_exceptions.contains(&name))
-            && !self.exception_capture_stack.is_captured(&name)
-        {
-            self.errors
-                .extend_one(FunctionRaise::direct(self.file, name, raise.range));
+        if let Stmt::Raise(raise) = stmt {
+            if raise.exc.is_none() {
+                if let Some(handler_exceptions) = self
+                    .exception_capture_stack
+                    .get_current_handler_exceptions()
+                {
+                    for exc_name in handler_exceptions {
+                        if exc_name == "*ALL*" {
+                            if let Some(try_exceptions) = self.try_block_exceptions.last() {
+                                for try_exc in try_exceptions {
+                                    if self.target_exceptions.is_empty()
+                                        || self.target_exceptions.contains(try_exc)
+                                    {
+                                        self.errors.extend_one(FunctionRaise::direct(
+                                            self.file,
+                                            try_exc.clone(),
+                                            raise.range,
+                                        ));
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+                        if !self.target_exceptions.is_empty()
+                            && !self.target_exceptions.contains(&exc_name)
+                        {
+                            continue;
+                        }
+                        self.errors.extend_one(FunctionRaise::direct(
+                            self.file,
+                            exc_name.clone(),
+                            raise.range,
+                        ));
+                    }
+                }
+            } else if let Some(name) = try_extract_call_target_name(raise.exc.as_deref()) {
+                if (self.target_exceptions.is_empty() || self.target_exceptions.contains(&name))
+                    && !self.exception_capture_stack.is_captured(&name)
+                {
+                    self.errors
+                        .extend_one(FunctionRaise::direct(self.file, name, raise.range));
+                }
+            } else if let Some(Expr::Name(_name_expr)) = raise.exc.as_deref()
+                && self.exception_capture_stack.in_handler()
+                    && let Some(handler_exceptions) = self
+                        .exception_capture_stack
+                        .get_current_handler_exceptions()
+                    {
+                        for exc_name in handler_exceptions {
+                            if exc_name == "*ALL*" {
+                                continue;
+                            }
+                            if !self.target_exceptions.is_empty()
+                                && !self.target_exceptions.contains(&exc_name)
+                            {
+                                continue;
+                            }
+                            self.errors.extend_one(FunctionRaise::direct(
+                                self.file,
+                                exc_name.clone(),
+                                raise.range,
+                            ));
+                        }
+                    }
             walk_stmt(self, stmt);
         } else if let Stmt::Try(StmtTry {
             body,
@@ -94,18 +153,47 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
             ..
         }) = stmt
         {
+            let mut try_exceptions = Vec::new();
+            let saved_errors_len = self.errors.len();
+
+            self.visit_body(body);
+
+            for error in &self.errors[saved_errors_len..] {
+                let exc_name = error.name().clone();
+                if !try_exceptions.contains(&exc_name) {
+                    try_exceptions.push(exc_name);
+                }
+            }
+
             let caught_exceptions = handlers
                 .iter()
                 .flat_map(extract_caught_exceptions)
                 .collect::<Vec<_>>();
-            self.exception_capture_stack.push(caught_exceptions);
-            self.visit_body(body);
-            self.exception_capture_stack.pop();
-            for handler in handlers {
-                if let Some(except_handler) = handler.as_except_handler() {
-                    self.visit_body(&except_handler.body);
+
+            self.exception_capture_stack.push(caught_exceptions.clone());
+
+            let mut filtered_errors = Vec::new();
+            for (idx, error) in self.errors.iter().enumerate() {
+                if idx < saved_errors_len || !self.exception_capture_stack.is_captured(error.name())
+                {
+                    filtered_errors.push(error.clone());
                 }
             }
+            self.errors = filtered_errors;
+
+            self.try_block_exceptions.push(try_exceptions);
+            self.exception_capture_stack.pop();
+
+            for handler in handlers {
+                if let Some(except_handler) = handler.as_except_handler() {
+                    let handler_exceptions = extract_caught_exceptions(handler);
+                    self.exception_capture_stack
+                        .push_handler_exceptions(handler_exceptions);
+                    self.visit_body(&except_handler.body);
+                    self.exception_capture_stack.pop_handler_exceptions();
+                }
+            }
+            self.try_block_exceptions.pop();
             self.visit_body(orelse);
             self.visit_body(finalbody);
         } else {
@@ -120,13 +208,18 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                 for def in defs {
                     if let ResolvedDefinition::Definition(def) = def {
                         let definition_file = def.file(self.db);
-                        if let Some(path) = definition_file.path(self.db).as_system_path()
-                            && !self.db.project().is_file_included(self.db, path)
-                        {
-                            continue;
-                        }
+                        let definition_path = match definition_file.path(self.db) {
+                            ruff_db::files::FilePath::System(path)
+                                if !self.db.project().is_file_included(self.db, path) =>
+                            {
+                                continue;
+                            }
+                            ruff_db::files::FilePath::System(path) => path,
+                            ruff_db::files::FilePath::SystemVirtual(_) => continue,
+                            ruff_db::files::FilePath::Vendored(_) => continue,
+                        };
                         if let Some(name) = def.name(self.db) {
-                            let key = (definition_file.path(self.db).as_str().into(), name);
+                            let key = (definition_path.as_str().into(), name);
                             if self.call_stack.contains(&key) {
                                 continue;
                             }

@@ -1,10 +1,10 @@
-from simple import raises_exception
+from simple2 import raises_exception
 
 
 def catches_all_errors() -> None:
     try:
         raises_exception()
-    except RuntimeError:
+    except FileNotFoundError:
         pass
 
 
@@ -14,21 +14,21 @@ def catches_some_errors(i: int) -> None:
             raises_exception()
         else:
             raise TypeError()
-    except RuntimeError:
+    except FileNotFoundError:
         pass
 
 
 def bare_reraise() -> None:
     try:
         raises_exception()
-    except RuntimeError:
+    except FileNotFoundError:
         raise
 
 
 def named_reraise() -> None:
     try:
         raises_exception()
-    except RuntimeError as e:
+    except FileNotFoundError as e:
         raise e
 
 
@@ -51,7 +51,7 @@ def multiple_except_blocks() -> None:
         raises_exception()
     except ValueError:
         pass
-    except RuntimeError:
+    except FileNotFoundError:
         raise
     except Exception:
         pass
@@ -61,15 +61,15 @@ def nested_try_reraise() -> None:
     try:
         try:
             raises_exception()
-        except RuntimeError:
+        except FileNotFoundError:
             raise
-    except RuntimeError:
+    except FileNotFoundError:
         pass
 
 
 def conditional_reraise(should_reraise: bool) -> None:
     try:
         raises_exception()
-    except RuntimeError as e:
+    except FileNotFoundError as e:
         if should_reraise:
             raise e

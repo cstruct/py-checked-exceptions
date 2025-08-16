@@ -72,7 +72,30 @@ fn test_except() -> Result<()> {
     assert_diagnostics(
         "except.py",
         None,
-        vec![("Raises TypeError", (16, 13), (16, 30))],
+        vec![
+            ("Raises TypeError", (16, 13), (16, 30)),
+            ("Raises RuntimeError", (25, 9), (25, 14)),
+            ("Raises RuntimeError", (32, 9), (32, 16)),
+            ("Raises RuntimeError", (39, 9), (39, 14)),
+            ("Raises RuntimeError", (55, 9), (55, 14)),
+            ("Raises RuntimeError", (75, 13), (75, 20)),
+        ],
+    )
+}
+
+#[test]
+fn test_except2() -> Result<()> {
+    assert_diagnostics(
+        "except2.py",
+        None,
+        vec![
+            ("Raises TypeError", (16, 13), (16, 30)),
+            ("Raises FileNotFoundError", (25, 9), (25, 14)),
+            ("Raises FileNotFoundError", (32, 9), (32, 16)),
+            ("Raises FileNotFoundError", (39, 9), (39, 14)),
+            ("Raises FileNotFoundError", (55, 9), (55, 14)),
+            ("Raises FileNotFoundError", (75, 13), (75, 20)),
+        ],
     )
 }
 

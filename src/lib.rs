@@ -97,14 +97,13 @@ pub fn analyze_file(
     module_collector.init(&module_ref);
 
     for func_def in module_collector.list_functions() {
-        let mut exception_capture_stack = ExceptionCaptureStack::new();
         let errors = get_transitive_errors(
             db,
             file,
             func_def,
             target_exceptions,
             CallStack::new(),
-            &mut exception_capture_stack,
+            &ExceptionCaptureStack::new(),
         );
         for error in errors {
             sender.send(error.into()).unwrap();

@@ -31,7 +31,11 @@ pub(crate) fn extract_errors<'db>(
     exception_capture_stack: &'db ExceptionCaptureStack,
 ) -> Vec<FunctionRaise> {
     let module = parsed_module(db, definition_file).load(db);
-    let (definition_file, definition) = resolve_alias(db, &module, definition_file, definition);
+    let Some((definition_file, definition)) =
+        resolve_alias(db, &module, definition_file, definition)
+    else {
+        return vec![];
+    };
     let module = parsed_module(db, definition_file).load(db);
     let mut module_collector = ModuleCollector::new();
     module_collector.init(&module);
@@ -65,7 +69,7 @@ pub(crate) fn extract_caught_exceptions(handler: &ExceptHandler) -> Vec<String> 
         return vec![];
     };
     let Some(ref type_) = handler.type_ else {
-        return vec![];
+        return vec!["*ALL*".to_string()];
     };
     if let Expr::Name(ExprName { id, .. }) = &**type_ {
         return vec![id.to_string()];
@@ -84,11 +88,11 @@ fn resolve_alias<'a>(
     module: &ParsedModuleRef,
     def_file: File,
     def: Definition<'a>,
-) -> (File, Definition<'a>) {
+) -> Option<(File, Definition<'a>)> {
     let mut file = def_file;
     let mut def = def;
     while let DefinitionKind::Assignment(ass) = def.kind(db) {
-        let value = ass.value(module).as_name_expr().unwrap();
+        let value = ass.value(module).as_name_expr()?;
         for resolved in definitions_for_name(db, def_file, value) {
             if let ResolvedDefinition::Definition(inner_def) = resolved {
                 file = inner_def.file(db);
@@ -97,5 +101,5 @@ fn resolve_alias<'a>(
             }
         }
     }
-    (file, def)
+    Some((file, def))
 }
