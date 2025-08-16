@@ -3,7 +3,7 @@ use ruff_source_file::LineIndex;
 use std::env::current_dir;
 
 use itertools::{EitherOrBoth, Itertools};
-use py_checked_exceptions::{Exception, analyze_project};
+use py_checked_exceptions::{Exception, analyze_project, resolve_absolute_module_path};
 use ruff_db::{
     diagnostic::Diagnostic,
     files::{File, FilePath},
@@ -62,7 +62,7 @@ fn test_recursion() -> Result<()> {
 fn test_target_exception() -> Result<()> {
     assert_diagnostics(
         "target_exception.py",
-        Some("MyError".into()),
+        Some("target_exception.MyError".into()),
         vec![("Raises MyError", (6, 9), (6, 24))],
     )
 }
@@ -106,7 +106,7 @@ fn test_inheritance() -> Result<()> {
         None,
         vec![
             ("Raises CustomBaseError", (26, 9), (26, 32)),
-            ("Raises CustomBaseError", (67, 9), (67, 14)),
+            ("Raises CustomBaseError", (60, 9), (60, 14)),
         ],
     )
 }
@@ -129,7 +129,7 @@ fn assert_diagnostics(
     let project_path2 = project_path.clone();
     let target_exceptions = target_exception
         .iter()
-        .map(|e| Exception::new(e.clone(), vec![Exception::base_exception()]))
+        .map(|e| resolve_absolute_module_path(&db, e))
         .collect::<Vec<_>>();
     let diagnostics: Vec<Diagnostic> =
         analyze_project(project_path, db, Some(filter_path), target_exceptions, None)?.collect();

@@ -4,12 +4,17 @@ use anyhow::bail;
 use crossbeam::channel::Sender;
 use crossbeam::channel::bounded;
 use indicatif::ProgressBar;
+use itertools::Itertools;
 use rayon::prelude::*;
 use ruff_db::diagnostic::Diagnostic;
 use ruff_db::files::File;
 use ruff_db::parsed::parsed_module;
 use ruff_db::system::SystemPathBuf;
 use ty_project::{Db, ProjectDatabase};
+use ty_python_semantic::ModuleName;
+use ty_python_semantic::resolve_module;
+use ty_python_semantic::semantic_index::global_scope;
+use ty_python_semantic::types::resolve_definition::find_symbol_in_scope;
 
 use crate::module::ModuleCollector;
 use crate::transitive_error::call_stack::CallStack;
@@ -112,4 +117,27 @@ pub fn analyze_file(
             sender.send(error.into()).unwrap();
         }
     }
+}
+
+pub fn resolve_absolute_module_path(db: &dyn Db, path: &str) -> Exception {
+    let parts = path.split(".").collect_vec();
+    let exception_name = parts
+        .last()
+        .expect("target exception has to be in 'full.module.path.Exception' format.");
+    let module_components = parts[..parts.len() - 1].to_vec();
+    let module_name = ModuleName::from_components(module_components)
+        .expect("target exception has to be a valid module path.");
+    let module = resolve_module(db, &module_name)
+        .expect("target exception has to resolve to an existing module.");
+    let module_file = module.file(db).unwrap();
+    let global_scope = global_scope(db, module_file);
+    let definitions_in_module = find_symbol_in_scope(db, global_scope, exception_name);
+    for def in definitions_in_module {
+        let file = def.file(db);
+        let Some(exc) = extract_exception(db, file, def) else {
+            continue;
+        };
+        return exc;
+    }
+    panic!("Failed to resolve exception from module path");
 }

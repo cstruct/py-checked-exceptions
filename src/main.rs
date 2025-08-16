@@ -1,13 +1,11 @@
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
-use itertools::Itertools;
-use py_checked_exceptions::{analyze_project, extract_exception};
+use py_checked_exceptions::{analyze_project, resolve_absolute_module_path};
 use ruff_db::{
     diagnostic::{Diagnostic, DisplayDiagnosticConfig},
     system::{OsSystem, SystemPath, SystemPathBuf},
 };
-use ty_python_semantic::{resolve_module, semantic_index::global_scope, types::resolve_definition::find_symbol_in_scope, ModuleName};
 use std::{io::Write, sync::LazyLock};
 use ty_project::{ProjectDatabase, ProjectMetadata};
 
@@ -65,22 +63,7 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<()> {
     let target_exceptions: Vec<Exception> = check
         .target_exceptions
         .into_iter()
-        .filter_map(|path| {
-            let parts = path.split(".").collect_vec();
-            let exception_name = parts.last().expect("target exception has to be in 'full.module.path.Exception' format.");
-            let module_components = parts[..parts.len() - 1].to_vec();
-            let module_name = ModuleName::from_components(module_components).expect("target exception has to be a valid module path.");
-            let module = resolve_module(&db, &module_name).expect("target exception has to resolve to an existing module.");
-            let module_file = module.file(&db).unwrap();
-            let global_scope = global_scope(&db, module_file);
-            let definitions_in_module = find_symbol_in_scope(&db, global_scope, exception_name);
-            for def in definitions_in_module {
-                let file = def.file(&db);
-                let Some(exc) = extract_exception(&db, file, def) else { continue; };
-                return Some(exc)
-            }
-            None
-        })
+        .map(|path| resolve_absolute_module_path(&db, &path))
         .collect();
 
     let mut diagnostics: Vec<Diagnostic> = analyze_project(
