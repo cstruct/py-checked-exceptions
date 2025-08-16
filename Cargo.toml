@@ -2,6 +2,13 @@
 name = "py-checked-exceptions"
 version = "0.1.0"
 edition = "2024"
+license-file = "LICENSE"
+description = "A static analyzer that enforces exception documentation in Python code"
+homepage = "https://github.com/cstruct/py-checked-exceptions"
+repository = "https://github.com/cstruct/py-checked-exceptions"
+readme = "README.md"
+keywords = ["python", "static-analysis"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0.98"
