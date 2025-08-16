@@ -14,7 +14,7 @@ This tool currently doesn't support:
 ## Installation
 
 ```bash
-cargo install py-checked-exceptions
+cargo install --git https://github.com/cstruct/py-checked-exceptions.git
 ```
 
 ## Contributing
