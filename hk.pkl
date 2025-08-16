@@ -1,0 +1,45 @@
+amends "package://github.com/jdx/hk/releases/download/v1.2.0/hk@1.2.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.2.0/hk@1.2.0#/Builtins.pkl"
+
+local rust_steps = new Mapping<String, Step> {
+    ["cargo-fmt"] {
+        glob = "*.rs"
+        check = "cargo fmt --check"
+        fix = "cargo fmt"
+    }
+    ["cargo-clippy"] {
+        glob = "*.rs"
+        check = "cargo clippy"
+        fix = "cargo clippy --fix"
+    }
+    ["cargo-check"] {
+        glob = "*.rs"
+        check = "cargo check"
+    }
+    ["cargo-test"] {
+        glob = "*.rs"
+        check = "cargo test"
+    }
+}
+
+local all_steps = new Mapping<String, Step> {
+    ...rust_steps
+}
+
+hooks {
+    ["pre-commit"] {
+        fix = true
+        stash = "git"
+        steps = all_steps
+    }
+    ["pre-push"] {
+        steps = all_steps
+    }
+    ["fix"] {
+        fix = true
+        steps = all_steps
+    }
+    ["check"] {
+        steps = all_steps
+    }
+}
