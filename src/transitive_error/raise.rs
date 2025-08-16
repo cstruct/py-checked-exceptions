@@ -3,14 +3,14 @@ use ruff_db::diagnostic::{Annotation, Diagnostic, DiagnosticId, LintName, Severi
 use ruff_db::files::{File, FileRange};
 use ruff_text_size::TextRange;
 
-#[derive(Clone, Debug, PartialEq, get_size2::GetSize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, get_size2::GetSize)]
 pub(crate) struct FunctionRaiseDirectTarget {
     file: File,
     exception: Exception,
     range: TextRange,
 }
 
-#[derive(Clone, Debug, PartialEq, get_size2::GetSize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, get_size2::GetSize)]
 pub(crate) struct FunctionRaiseTransitiveTarget {
     target: Box<FunctionRaise>,
     file: File,
@@ -19,7 +19,7 @@ pub(crate) struct FunctionRaiseTransitiveTarget {
     depth: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, get_size2::GetSize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, get_size2::GetSize)]
 pub(crate) enum FunctionRaise {
     Direct(FunctionRaiseDirectTarget),
     Transitive(FunctionRaiseTransitiveTarget),
@@ -75,14 +75,14 @@ impl FunctionRaise {
     }
 }
 
-impl From<FunctionRaise> for Diagnostic {
-    fn from(val: FunctionRaise) -> Self {
-        match &val {
+impl From<&FunctionRaise> for Diagnostic {
+    fn from(val: &FunctionRaise) -> Self {
+        match val {
             FunctionRaise::Direct(direct) => {
                 let mut diagnostic = Diagnostic::new(
                     DiagnosticId::Lint(LintName::of("raise")),
                     Severity::Error,
-                    format!("Raises {}", direct.exception.name,),
+                    format!("Raises undocumented error {}", direct.exception.name,),
                 );
                 diagnostic.annotate(Annotation::primary(Span::from(FileRange::new(
                     direct.file,
@@ -94,13 +94,13 @@ impl From<FunctionRaise> for Diagnostic {
                 let mut diagnostic = Diagnostic::new(
                     DiagnosticId::Lint(LintName::of("raise")),
                     Severity::Error,
-                    format!("Raises {}", transitive.exception.name),
+                    format!("Raises undocumented error {}", transitive.exception.name),
                 );
                 diagnostic.annotate(Annotation::primary(Span::from(FileRange::new(
                     transitive.file,
                     transitive.range,
                 ))));
-                build_call_chain(&mut diagnostic, &val);
+                build_call_chain(&mut diagnostic, val);
                 diagnostic
             }
         }

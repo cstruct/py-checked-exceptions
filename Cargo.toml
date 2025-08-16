@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1.0.98"
 itertools = "0.14.0"
 ruff_db = { path = "ruff/crates/ruff_db", features = ["os"]}
+ruff_linter = { path = "ruff/crates/ruff_linter" }
 ruff_python_ast = { path = "ruff/crates/ruff_python_ast", features = ["get-size"]}
 ruff_text_size = { path = "ruff/crates/ruff_text_size" }
 ruff_source_file = { path = "ruff/crates/ruff_source_file" }

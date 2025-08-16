@@ -16,11 +16,13 @@ use ty_python_semantic::resolve_module;
 use ty_python_semantic::semantic_index::global_scope;
 use ty_python_semantic::types::resolve_definition::find_symbol_in_scope;
 
+use crate::docstring::compare_documented_exceptions;
 use crate::module::ModuleCollector;
 use crate::transitive_error::call_stack::CallStack;
 use crate::transitive_error::capture_stack::ExceptionCaptureStack;
 use crate::transitive_error::visitor::get_transitive_errors;
 
+mod docstring;
 mod module;
 mod transitive_error;
 
@@ -113,8 +115,9 @@ pub fn analyze_file(
             CallStack::new(),
             &ExceptionCaptureStack::new(),
         );
-        for error in errors {
-            sender.send(error.into()).unwrap();
+        let diagnostics = compare_documented_exceptions(db, file, &func_def.body, &errors);
+        for diagnostic in diagnostics {
+            sender.send(diagnostic).unwrap();
         }
     }
 }

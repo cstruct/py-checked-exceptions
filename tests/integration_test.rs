@@ -3,7 +3,7 @@ use ruff_source_file::LineIndex;
 use std::env::current_dir;
 
 use itertools::{EitherOrBoth, Itertools};
-use py_checked_exceptions::{Exception, analyze_project, resolve_absolute_module_path};
+use py_checked_exceptions::{analyze_project, resolve_absolute_module_path};
 use ruff_db::{
     diagnostic::Diagnostic,
     files::{File, FilePath},
@@ -17,7 +17,7 @@ fn test_simple() -> Result<()> {
     assert_diagnostics(
         "simple.py",
         None,
-        vec![("Raises RuntimeError", (2, 5), (2, 25))],
+        vec![("Raises undocumented error RuntimeError", (2, 5), (2, 25))],
     )
 }
 
@@ -27,8 +27,8 @@ fn test_transitive() -> Result<()> {
         "transitive.py",
         None,
         vec![
-            ("Raises RuntimeError", (5, 5), (5, 23)),
-            ("Raises RuntimeError", (9, 5), (9, 11)),
+            ("Raises undocumented error RuntimeError", (5, 5), (5, 23)),
+            ("Raises undocumented error RuntimeError", (9, 5), (9, 11)),
         ],
     )
 }
@@ -39,8 +39,8 @@ fn test_class() -> Result<()> {
         "class.py",
         None,
         vec![
-            ("Raises RuntimeError", (3, 9), (3, 29)),
-            ("Raises RuntimeError", (6, 9), (6, 32)),
+            ("Raises undocumented error RuntimeError", (3, 9), (3, 29)),
+            ("Raises undocumented error RuntimeError", (6, 9), (6, 32)),
         ],
     )
 }
@@ -51,9 +51,9 @@ fn test_recursion() -> Result<()> {
         "recursive.py",
         None,
         vec![
-            ("Raises RuntimeError", (3, 5), (3, 25)),
-            ("Raises RuntimeError", (7, 5), (7, 45)),
-            ("Raises RuntimeError", (14, 5), (14, 25)),
+            ("Raises undocumented error RuntimeError", (3, 5), (3, 25)),
+            ("Raises undocumented error RuntimeError", (7, 5), (7, 45)),
+            ("Raises undocumented error RuntimeError", (14, 5), (14, 25)),
         ],
     )
 }
@@ -63,7 +63,7 @@ fn test_target_exception() -> Result<()> {
     assert_diagnostics(
         "target_exception.py",
         Some("target_exception.MyError".into()),
-        vec![("Raises MyError", (6, 9), (6, 24))],
+        vec![("Raises undocumented error MyError", (6, 9), (6, 24))],
     )
 }
 
@@ -73,12 +73,12 @@ fn test_except() -> Result<()> {
         "except.py",
         None,
         vec![
-            ("Raises TypeError", (16, 13), (16, 30)),
-            ("Raises RuntimeError", (25, 9), (25, 14)),
-            ("Raises RuntimeError", (32, 9), (32, 16)),
-            ("Raises RuntimeError", (39, 9), (39, 14)),
-            ("Raises RuntimeError", (55, 9), (55, 14)),
-            ("Raises RuntimeError", (75, 13), (75, 20)),
+            ("Raises undocumented error TypeError", (16, 13), (16, 30)),
+            ("Raises undocumented error RuntimeError", (25, 9), (25, 14)),
+            ("Raises undocumented error RuntimeError", (32, 9), (32, 16)),
+            ("Raises undocumented error RuntimeError", (39, 9), (39, 14)),
+            ("Raises undocumented error RuntimeError", (55, 9), (55, 14)),
+            ("Raises undocumented error RuntimeError", (75, 13), (75, 20)),
         ],
     )
 }
@@ -89,12 +89,32 @@ fn test_except2() -> Result<()> {
         "except2.py",
         None,
         vec![
-            ("Raises TypeError", (16, 13), (16, 30)),
-            ("Raises FileNotFoundError", (25, 9), (25, 14)),
-            ("Raises FileNotFoundError", (32, 9), (32, 16)),
-            ("Raises FileNotFoundError", (39, 9), (39, 14)),
-            ("Raises FileNotFoundError", (55, 9), (55, 14)),
-            ("Raises FileNotFoundError", (75, 13), (75, 20)),
+            ("Raises undocumented error TypeError", (16, 13), (16, 30)),
+            (
+                "Raises undocumented error FileNotFoundError",
+                (25, 9),
+                (25, 14),
+            ),
+            (
+                "Raises undocumented error FileNotFoundError",
+                (32, 9),
+                (32, 16),
+            ),
+            (
+                "Raises undocumented error FileNotFoundError",
+                (39, 9),
+                (39, 14),
+            ),
+            (
+                "Raises undocumented error FileNotFoundError",
+                (55, 9),
+                (55, 14),
+            ),
+            (
+                "Raises undocumented error FileNotFoundError",
+                (75, 13),
+                (75, 20),
+            ),
         ],
     )
 }
@@ -105,9 +125,30 @@ fn test_inheritance() -> Result<()> {
         "inheritance.py",
         None,
         vec![
-            ("Raises CustomBaseError", (26, 9), (26, 32)),
-            ("Raises CustomBaseError", (60, 9), (60, 14)),
+            (
+                "Raises undocumented error CustomBaseError",
+                (26, 9),
+                (26, 32),
+            ),
+            (
+                "Raises undocumented error CustomBaseError",
+                (60, 9),
+                (60, 14),
+            ),
         ],
+    )
+}
+
+#[test]
+fn test_docstrings() -> Result<()> {
+    assert_diagnostics(
+        "docstrings.py",
+        None,
+        vec![(
+            "Documents extra error that is never raised RuntimeError",
+            (14, 6),
+            (14, 18),
+        )],
     )
 }
 
