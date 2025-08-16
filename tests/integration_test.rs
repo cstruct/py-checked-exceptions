@@ -3,7 +3,7 @@ use ruff_source_file::LineIndex;
 use std::env::current_dir;
 
 use itertools::{EitherOrBoth, Itertools};
-use py_checked_exceptions::analyze_project;
+use py_checked_exceptions::{Exception, analyze_project};
 use ruff_db::{
     diagnostic::Diagnostic,
     files::{File, FilePath},
@@ -99,6 +99,18 @@ fn test_except2() -> Result<()> {
     )
 }
 
+#[test]
+fn test_inheritance() -> Result<()> {
+    assert_diagnostics(
+        "inheritance.py",
+        None,
+        vec![
+            ("Raises CustomBaseError", (26, 9), (26, 32)),
+            ("Raises CustomBaseError", (67, 9), (67, 14)),
+        ],
+    )
+}
+
 fn assert_diagnostics(
     test_file: &str,
     target_exception: Option<String>,
@@ -117,7 +129,7 @@ fn assert_diagnostics(
     let project_path2 = project_path.clone();
     let target_exceptions = target_exception
         .iter()
-        .map(|e| e.clone())
+        .map(|e| Exception::new(e.clone(), vec![Exception::base_exception()]))
         .collect::<Vec<_>>();
     let diagnostics: Vec<Diagnostic> =
         analyze_project(project_path, db, Some(filter_path), target_exceptions, None)?.collect();

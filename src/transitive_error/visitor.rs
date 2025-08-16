@@ -1,22 +1,23 @@
 use itertools::Itertools;
 use ruff_db::files::File;
 use ruff_python_ast::visitor::{Visitor, walk_expr, walk_stmt};
-use ruff_python_ast::{
-    Expr, ExprAttribute, ExprCall, ExprSubscript, Stmt, StmtFunctionDef, StmtTry,
-};
+use ruff_python_ast::{Expr, ExprCall, Stmt, StmtFunctionDef, StmtTry};
 use ty_project::Db;
 use ty_python_semantic::{ResolvedDefinition, definitions_for_attribute, definitions_for_name};
 
 use crate::transitive_error::call_stack::CallStack;
 use crate::transitive_error::capture_stack::ExceptionCaptureStack;
-use crate::transitive_error::extract::{extract_caught_exceptions, extract_errors};
+use crate::transitive_error::exception::Exception;
+use crate::transitive_error::extract::{
+    extract_caught_exceptions, extract_errors, try_extract_exception_from_expr,
+};
 use crate::transitive_error::raise::FunctionRaise;
 
 pub(crate) fn get_transitive_errors<'a>(
     db: &'a dyn Db,
     file: File,
     func: &'a StmtFunctionDef,
-    target_exceptions: &Vec<String>,
+    target_exceptions: &Vec<Exception>,
     call_stack: CallStack,
     exception_capture_stack: &'a ExceptionCaptureStack,
 ) -> Vec<FunctionRaise> {
@@ -35,11 +36,11 @@ pub(crate) struct FunctionTransitiveErrorVisitor<'a> {
     db: &'a dyn Db,
     file: File,
     func: &'a StmtFunctionDef,
-    target_exceptions: &'a Vec<String>,
+    target_exceptions: &'a Vec<Exception>,
     errors: Vec<FunctionRaise>,
     call_stack: CallStack,
     exception_capture_stack: ExceptionCaptureStack,
-    try_block_exceptions: Vec<Vec<String>>,
+    try_block_exceptions: Vec<Vec<Exception>>,
 }
 
 impl<'a> FunctionTransitiveErrorVisitor<'a> {
@@ -47,7 +48,7 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
         db: &'a dyn Db,
         file: File,
         func: &'a StmtFunctionDef,
-        target_exceptions: &'a Vec<String>,
+        target_exceptions: &'a Vec<Exception>,
         call_stack: CallStack,
         exception_capture_stack: &'a ExceptionCaptureStack,
     ) -> Self {
@@ -86,12 +87,15 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                     .exception_capture_stack
                     .get_current_handler_exceptions()
                 {
-                    for exc_name in handler_exceptions {
-                        if exc_name == "*ALL*" {
+                    for exc in handler_exceptions {
+                        if exc.name == "BaseException" && exc.bases.is_empty() {
                             if let Some(try_exceptions) = self.try_block_exceptions.last() {
                                 for try_exc in try_exceptions {
                                     if self.target_exceptions.is_empty()
-                                        || self.target_exceptions.contains(try_exc)
+                                        || self
+                                            .target_exceptions
+                                            .iter()
+                                            .any(|t| try_exc.is_subclass_of(t))
                                     {
                                         self.errors.extend_one(FunctionRaise::direct(
                                             self.file,
@@ -104,46 +108,49 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                             continue;
                         }
                         if !self.target_exceptions.is_empty()
-                            && !self.target_exceptions.contains(&exc_name)
+                            && !self.target_exceptions.iter().any(|t| exc.is_subclass_of(t))
                         {
                             continue;
                         }
                         self.errors.extend_one(FunctionRaise::direct(
                             self.file,
-                            exc_name.clone(),
+                            exc.clone(),
                             raise.range,
                         ));
                     }
                 }
-            } else if let Some(name) = try_extract_call_target_name(raise.exc.as_deref()) {
-                if (self.target_exceptions.is_empty() || self.target_exceptions.contains(&name))
-                    && !self.exception_capture_stack.is_captured(&name)
+            } else if let Some(Expr::Call(ExprCall { func, .. })) = raise.exc.as_deref()
+                && let Some(exc) = try_extract_exception_from_expr(self.db, self.file, func)
+            {
+                if (self.target_exceptions.is_empty()
+                    || self.target_exceptions.iter().any(|t| exc.is_subclass_of(t)))
+                    && !self.exception_capture_stack.is_captured(&exc)
                 {
                     self.errors
-                        .extend_one(FunctionRaise::direct(self.file, name, raise.range));
+                        .extend_one(FunctionRaise::direct(self.file, exc, raise.range));
                 }
             } else if let Some(Expr::Name(_name_expr)) = raise.exc.as_deref()
                 && self.exception_capture_stack.in_handler()
-                    && let Some(handler_exceptions) = self
-                        .exception_capture_stack
-                        .get_current_handler_exceptions()
-                    {
-                        for exc_name in handler_exceptions {
-                            if exc_name == "*ALL*" {
-                                continue;
-                            }
-                            if !self.target_exceptions.is_empty()
-                                && !self.target_exceptions.contains(&exc_name)
-                            {
-                                continue;
-                            }
-                            self.errors.extend_one(FunctionRaise::direct(
-                                self.file,
-                                exc_name.clone(),
-                                raise.range,
-                            ));
-                        }
+                && let Some(handler_exceptions) = self
+                    .exception_capture_stack
+                    .get_current_handler_exceptions()
+            {
+                for exc in handler_exceptions {
+                    if exc.name == "BaseException" && exc.bases.is_empty() {
+                        continue;
                     }
+                    if !self.target_exceptions.is_empty()
+                        && !self.target_exceptions.iter().any(|t| exc.is_subclass_of(t))
+                    {
+                        continue;
+                    }
+                    self.errors.extend_one(FunctionRaise::direct(
+                        self.file,
+                        exc.clone(),
+                        raise.range,
+                    ));
+                }
+            }
             walk_stmt(self, stmt);
         } else if let Stmt::Try(StmtTry {
             body,
@@ -159,18 +166,19 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
             self.visit_body(body);
 
             for error in &self.errors[saved_errors_len..] {
-                let exc_name = error.name().clone();
-                if !try_exceptions.contains(&exc_name) {
-                    try_exceptions.push(exc_name);
+                let exc = error.name().clone();
+                if !try_exceptions.iter().any(|t| exc.is_subclass_of(t)) {
+                    try_exceptions.push(exc);
                 }
             }
 
             let caught_exceptions = handlers
                 .iter()
-                .flat_map(extract_caught_exceptions)
+                .flat_map(|h| extract_caught_exceptions(self.db, self.file, h))
                 .collect::<Vec<_>>();
 
-            self.exception_capture_stack = self.exception_capture_stack.push(caught_exceptions.clone());
+            self.exception_capture_stack =
+                self.exception_capture_stack.push(caught_exceptions.clone());
 
             let mut filtered_errors = Vec::new();
             for (idx, error) in self.errors.iter().enumerate() {
@@ -186,11 +194,13 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
 
             for handler in handlers {
                 if let Some(except_handler) = handler.as_except_handler() {
-                    let handler_exceptions = extract_caught_exceptions(handler);
-                    self.exception_capture_stack = self.exception_capture_stack
+                    let handler_exceptions = extract_caught_exceptions(self.db, self.file, handler);
+                    self.exception_capture_stack = self
+                        .exception_capture_stack
                         .push_handler_exceptions(handler_exceptions);
                     self.visit_body(&except_handler.body);
-                    self.exception_capture_stack = self.exception_capture_stack.pop_handler_exceptions();
+                    self.exception_capture_stack =
+                        self.exception_capture_stack.pop_handler_exceptions();
                 }
             }
             self.try_block_exceptions.pop();
@@ -233,7 +243,8 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                             self.target_exceptions.clone(),
                             self.call_stack.clone(),
                             self.exception_capture_stack.clone(),
-                        ).to_vec();
+                        )
+                        .to_vec();
                         self.errors.extend(
                             transitive_errors
                                 .into_iter()
@@ -245,24 +256,6 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
         }
         walk_expr(self, expr);
     }
-}
-
-#[inline(always)]
-fn try_extract_call_target_name(expr: Option<&Expr>) -> Option<String> {
-    if let Some(Expr::Call(ExprCall { func, .. })) = expr {
-        if let Expr::Name(ref name) = **func {
-            return Some((*name.id.as_str()).into());
-        }
-        if let Expr::Attribute(ExprAttribute { ref attr, .. }) = **func {
-            return Some((*attr.as_str()).into());
-        }
-        if let Expr::Subscript(ExprSubscript { ref value, .. }) = **func
-            && let Expr::Name(ref name) = **value
-        {
-            return Some((*name.id.as_str()).into());
-        }
-    }
-    None
 }
 
 fn definitions_for_call_func<'a>(

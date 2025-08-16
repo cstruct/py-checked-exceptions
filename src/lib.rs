@@ -19,11 +19,13 @@ use crate::transitive_error::visitor::get_transitive_errors;
 mod module;
 mod transitive_error;
 
+pub use transitive_error::exception::Exception;
+
 pub fn analyze_project(
     project_path: SystemPathBuf,
     db: ProjectDatabase,
     filter_path: Option<SystemPathBuf>,
-    target_exceptions: Vec<String>,
+    target_exceptions: Vec<crate::Exception>,
     progress_bar: Option<&'static ProgressBar>,
 ) -> Result<impl Iterator<Item = Diagnostic>> {
     let (sender, receiver) = bounded(10);
@@ -83,7 +85,7 @@ pub fn analyze_file(
     db: &mut ProjectDatabase,
     sender: &Sender<Diagnostic>,
     file: File,
-    target_exceptions: &Vec<String>,
+    target_exceptions: &Vec<crate::Exception>,
 ) {
     let module = parsed_module(db, file);
     let module_ref = module.load(db);

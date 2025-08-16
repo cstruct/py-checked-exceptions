@@ -10,6 +10,7 @@ use ruff_text_size::TextRange;
 pub(crate) struct ModuleCollector<'a> {
     overloads: Option<(Identifier, Vec<&'a StmtFunctionDef>)>,
     functions: Vec<(Vec<TextRange>, Vec<&'a StmtFunctionDef>)>,
+    classes: Vec<(TextRange, &'a StmtClassDef)>,
 }
 
 impl<'a> ModuleCollector<'a> {
@@ -17,6 +18,7 @@ impl<'a> ModuleCollector<'a> {
         Self {
             overloads: None,
             functions: vec![],
+            classes: vec![],
         }
     }
 
@@ -33,6 +35,12 @@ impl<'a> ModuleCollector<'a> {
             }
         }
         found
+    }
+
+    pub(crate) fn find_class(&self, range: &TextRange) -> Option<&StmtClassDef> {
+        self.classes
+            .iter()
+            .find_map(|(cls_range, cls)| if cls_range == range { Some(*cls) } else { None })
     }
 
     pub(crate) fn list_functions(&self) -> Vec<&StmtFunctionDef> {
@@ -78,7 +86,7 @@ impl<'a> StatementVisitor<'a> for ModuleCollector<'a> {
         if let Stmt::FunctionDef(def) = stmt {
             let collected = self.collect_function(def);
             self.functions.extend_one(collected);
-        } else if let Stmt::ClassDef(StmtClassDef { body, range, .. }) = stmt {
+        } else if let Stmt::ClassDef(def @ StmtClassDef { body, range, .. }) = stmt {
             let mut fns = vec![];
             for cls_stmt in body {
                 if let Stmt::FunctionDef(def @ StmtFunctionDef { name, .. }) = cls_stmt
@@ -90,6 +98,7 @@ impl<'a> StatementVisitor<'a> for ModuleCollector<'a> {
             if !fns.is_empty() {
                 self.functions.extend_one((vec![*range], fns));
             }
+            self.classes.extend_one((*range, def));
         }
         walk_stmt(self, stmt);
     }

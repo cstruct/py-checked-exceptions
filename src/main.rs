@@ -10,6 +10,7 @@ use std::{io::Write, sync::LazyLock};
 use ty_project::{ProjectDatabase, ProjectMetadata};
 
 use crate::args::{CheckCommand, Cli, Command};
+use py_checked_exceptions::Exception;
 
 mod args;
 
@@ -58,11 +59,18 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<()> {
         "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} \n({msg})",
     )?);
 
+    // Convert string exceptions to Exception structs
+    let target_exceptions: Vec<Exception> = check
+        .target_exceptions
+        .into_iter()
+        .map(|name| Exception::new(name, vec![Exception::base_exception()]))
+        .collect();
+
     let mut diagnostics: Vec<Diagnostic> = analyze_project(
         project_path.clone(),
         db.clone(),
         filter_path,
-        check.target_exceptions,
+        target_exceptions,
         Some(&PB),
     )?
     .collect();

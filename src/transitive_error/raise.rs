@@ -1,3 +1,4 @@
+use crate::transitive_error::exception::Exception;
 use ruff_db::diagnostic::{Annotation, Diagnostic, DiagnosticId, LintName, Severity, Span};
 use ruff_db::files::{File, FileRange};
 use ruff_text_size::TextRange;
@@ -5,7 +6,7 @@ use ruff_text_size::TextRange;
 #[derive(Clone, Debug, PartialEq, get_size2::GetSize)]
 pub(crate) struct FunctionRaiseDirectTarget {
     file: File,
-    name: String,
+    exception: Exception,
     range: TextRange,
 }
 
@@ -13,7 +14,7 @@ pub(crate) struct FunctionRaiseDirectTarget {
 pub(crate) struct FunctionRaiseTransitiveTarget {
     target: Box<FunctionRaise>,
     file: File,
-    name: String,
+    exception: Exception,
     range: TextRange,
     depth: usize,
 }
@@ -25,47 +26,51 @@ pub(crate) enum FunctionRaise {
 }
 
 impl FunctionRaise {
-    pub(crate) fn direct(file: File, name: String, range: TextRange) -> Self {
-        FunctionRaise::Direct(FunctionRaiseDirectTarget { file, name, range })
+    pub(crate) fn direct(file: File, exception: Exception, range: TextRange) -> Self {
+        FunctionRaise::Direct(FunctionRaiseDirectTarget {
+            file,
+            exception,
+            range,
+        })
     }
     pub(crate) fn sort_key(&self) -> (String, usize, usize) {
         match self {
-            FunctionRaise::Direct(e) => (e.name.clone(), 0, 0),
-            FunctionRaise::Transitive(e) => (e.name.clone(), 1, e.depth),
+            FunctionRaise::Direct(e) => (e.exception.name.clone(), 0, 0),
+            FunctionRaise::Transitive(e) => (e.exception.name.clone(), 1, e.depth),
         }
     }
     pub(crate) fn group_key(&self) -> String {
         match self {
-            FunctionRaise::Direct(e) => e.name.clone(),
-            FunctionRaise::Transitive(e) => e.name.clone(),
+            FunctionRaise::Direct(e) => e.exception.name.clone(),
+            FunctionRaise::Transitive(e) => e.exception.name.clone(),
         }
     }
     pub(crate) fn transitive(&self, file: File, range: TextRange) -> Self {
         match self {
-            FunctionRaise::Direct(FunctionRaiseDirectTarget { name, .. }) => {
+            FunctionRaise::Direct(FunctionRaiseDirectTarget { exception, .. }) => {
                 FunctionRaise::Transitive(FunctionRaiseTransitiveTarget {
                     target: Box::new(self.clone()),
                     file,
-                    name: (*name).clone(),
+                    exception: (*exception).clone(),
                     range,
                     depth: 1,
                 })
             }
-            FunctionRaise::Transitive(FunctionRaiseTransitiveTarget { name, depth, .. }) => {
-                FunctionRaise::Transitive(FunctionRaiseTransitiveTarget {
-                    target: Box::new(self.clone()),
-                    file,
-                    name: (*name).clone(),
-                    range,
-                    depth: depth + 1,
-                })
-            }
+            FunctionRaise::Transitive(FunctionRaiseTransitiveTarget {
+                exception, depth, ..
+            }) => FunctionRaise::Transitive(FunctionRaiseTransitiveTarget {
+                target: Box::new(self.clone()),
+                file,
+                exception: (*exception).clone(),
+                range,
+                depth: depth + 1,
+            }),
         }
     }
-    pub(crate) fn name(&self) -> &String {
+    pub(crate) fn name(&self) -> &Exception {
         match self {
-            FunctionRaise::Direct(r) => &r.name,
-            FunctionRaise::Transitive(r) => &r.name,
+            FunctionRaise::Direct(r) => &r.exception,
+            FunctionRaise::Transitive(r) => &r.exception,
         }
     }
 }
@@ -77,7 +82,7 @@ impl From<FunctionRaise> for Diagnostic {
                 let mut diagnostic = Diagnostic::new(
                     DiagnosticId::Lint(LintName::of("raise")),
                     Severity::Error,
-                    format!("Raises {}", direct.name,),
+                    format!("Raises {}", direct.exception.name,),
                 );
                 diagnostic.annotate(Annotation::primary(Span::from(FileRange::new(
                     direct.file,
@@ -89,7 +94,7 @@ impl From<FunctionRaise> for Diagnostic {
                 let mut diagnostic = Diagnostic::new(
                     DiagnosticId::Lint(LintName::of("raise")),
                     Severity::Error,
-                    format!("Raises {}", transitive.name),
+                    format!("Raises {}", transitive.exception.name),
                 );
                 diagnostic.annotate(Annotation::primary(Span::from(FileRange::new(
                     transitive.file,
