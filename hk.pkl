@@ -29,7 +29,7 @@ local all_steps = new Mapping<String, Step> {
 hooks {
     ["pre-commit"] {
         fix = true
-        stash = "git"
+        stash = "patch-file"
         steps = all_steps
     }
     ["pre-push"] {
