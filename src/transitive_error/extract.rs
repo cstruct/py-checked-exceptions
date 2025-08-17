@@ -19,7 +19,37 @@ use crate::{
 };
 
 #[allow(clippy::too_many_arguments)]
-#[salsa::tracked(returns(deref), no_eq, heap_size=ruff_memory_usage::heap_size)]
+fn extract_errors_cycle_fn<'db>(
+    _db: &'db dyn Db,
+    _value: &[FunctionRaise],
+    _count: u32,
+    _expr_file: File,
+    _expr_range: TextRange,
+    _definition_file: File,
+    _definition: Definition<'db>,
+    _target_exceptions: Vec<Exception>,
+    _call_stack: CallStack,
+    _exception_capture_stack: ExceptionCaptureStack,
+) -> salsa::CycleRecoveryAction<Vec<FunctionRaise>> {
+    salsa::CycleRecoveryAction::Iterate
+}
+
+#[allow(clippy::too_many_arguments)]
+fn extract_errors_initial<'db>(
+    _db: &'db dyn Db,
+    _expr_file: File,
+    _expr_range: TextRange,
+    _definition_file: File,
+    _definition: Definition<'db>,
+    _target_exceptions: Vec<Exception>,
+    _call_stack: CallStack,
+    _exception_capture_stack: ExceptionCaptureStack,
+) -> Vec<FunctionRaise> {
+    vec![]
+}
+
+#[allow(clippy::too_many_arguments)]
+#[salsa::tracked(returns(deref), cycle_fn=extract_errors_cycle_fn, cycle_initial=extract_errors_initial, heap_size=ruff_memory_usage::heap_size)]
 pub(crate) fn extract_errors<'db>(
     db: &'db dyn Db,
     expr_file: File,
