@@ -16,7 +16,7 @@ To check your project simply run the CLI from the root of the project:
 ```console
 > py-checked-exceptions check --output-format concise --target-exceptions module.path.MyBaseException
 src/foo.py:55:25: error[raise] Raises undocumented error MySpecificException
-Found 11 diagnostics
+Found 1 diagnostic
 ```
 
 The CLI currently only provides a `check` command that can be run to perform static analysis for a project.
@@ -34,7 +34,8 @@ Options:
       --project <PROJECT>
           Run the command within the given project directory.
 
-          All `pyproject.toml` files will be discovered by walking up the directory tree from the given project directory, as will the project's virtual environment (`.venv`).
+          All `pyproject.toml` files will be discovered by walking up the directory tree from the given project directory,
+          as will the project's virtual environment (`.venv`).
 
           Other command-line arguments (such as relative paths) will be resolved relative to the current working directory.
 
@@ -44,13 +45,18 @@ Options:
       --python <PATH>
           Path to the Python environment.
 
-          ty uses the Python environment to resolve type information and third-party dependencies.
+          py-checked-exceptions uses the Python environment to resolve type information and third-party dependencies.
 
-          If not specified, ty will attempt to infer it from the `VIRTUAL_ENV` or `CONDA_PREFIX` environment variables, or discover a `.venv` directory in the project root or working directory.
+          If not specified, py-checked-exceptions will attempt to infer it from the `VIRTUAL_ENV` or `CONDA_PREFIX`
+          environment variables, or discover a `.venv` directory in the project root or working directory.
 
-          If a path to a Python interpreter is provided, e.g., `.venv/bin/python3`, ty will attempt to find an environment two directories up from the interpreter's path, e.g., `.venv`. At this time, ty does not invoke the interpreter to determine the location of the environment. This means that ty will not resolve dynamic executables such as a shim.
+          If a path to a Python interpreter is provided, e.g., `.venv/bin/python3`, py-checked-exceptions will attempt to find
+          an environment two directories up from the interpreter's path, e.g., `.venv`. At this time, py-checked-exceptions
+          does not invoke the interpreter to determine the location of the environment. This means that py-checked-exceptions
+          will not resolve dynamic executables such as a shim.
 
-          ty will search in the resolved environment's `site-packages` directories for type information and third-party imports.
+          py-checked-exceptions will search in the resolved environment's `site-packages` directories for type information and
+          third-party imports.
 
       --typeshed <PATH>
           Custom directory to use for stdlib typeshed stubs
@@ -89,7 +95,8 @@ File selection:
       --exclude <EXCLUDE>
           Glob patterns for files to exclude from static analysis.
 
-          Uses gitignore-style syntax to exclude files and directories from type checking. Supports patterns like `tests/`, `*.tmp`, `**/__pycache__/**`.
+          Uses gitignore-style syntax to exclude files and directories from type checking.
+          Supports patterns like `tests/`, `*.tmp`, `**/__pycache__/**`.
 ```
 
 ## Known Limitations
