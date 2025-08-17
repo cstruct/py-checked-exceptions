@@ -219,11 +219,6 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                     if let ResolvedDefinition::Definition(def) = def {
                         let definition_file = def.file(self.db);
                         let definition_path = match definition_file.path(self.db) {
-                            ruff_db::files::FilePath::System(path)
-                                if !self.db.project().is_file_included(self.db, path) =>
-                            {
-                                continue;
-                            }
                             ruff_db::files::FilePath::System(path) => path,
                             ruff_db::files::FilePath::SystemVirtual(_) => continue,
                             ruff_db::files::FilePath::Vendored(_) => continue,

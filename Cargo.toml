@@ -20,6 +20,7 @@ ruff_text_size = { git = "https://github.com/cstruct/ruff.git", rev = "9d081b0df
 ruff_source_file = { git = "https://github.com/cstruct/ruff.git", rev = "9d081b0df6bb1d514252ca91d037cfca1ee061a8" }
 ruff_memory_usage = { git = "https://github.com/cstruct/ruff.git", rev = "9d081b0df6bb1d514252ca91d037cfca1ee061a8" }
 ty_ide = { git = "https://github.com/cstruct/ruff.git", rev = "9d081b0df6bb1d514252ca91d037cfca1ee061a8" }
+ty_static = { git = "https://github.com/cstruct/ruff.git", rev = "9d081b0df6bb1d514252ca91d037cfca1ee061a8" }
 ty_project = { git = "https://github.com/cstruct/ruff.git", rev = "9d081b0df6bb1d514252ca91d037cfca1ee061a8" }
 ty_python_semantic = { git = "https://github.com/cstruct/ruff.git", rev = "9d081b0df6bb1d514252ca91d037cfca1ee061a8" }
 once_cell = "1.21.3"
@@ -41,3 +42,8 @@ get-size2 = { version = "0.6.2", features = [
     "hashbrown",
     "compact-str",
 ] }
+colored = "3.0.0"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+tracing-flame = "0.2.0"
+jiff = "0.2.15"
+clearscreen = "4.0.2"

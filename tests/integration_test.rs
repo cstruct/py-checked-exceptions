@@ -10,7 +10,7 @@ use ruff_db::{
     source::source_text,
     system::{OsSystem, SystemPath, SystemPathBuf},
 };
-use ty_project::{ProjectDatabase, ProjectMetadata};
+use ty_project::{Db, ProjectDatabase, ProjectMetadata};
 
 #[test]
 fn test_simple() -> Result<()> {
@@ -165,15 +165,15 @@ fn assert_diagnostics(
     let mut project_metadata =
         ProjectMetadata::discover(&SystemPath::new(project_path.as_str()), &system)?;
     project_metadata.apply_configuration_files(&system)?;
-    let db = ProjectDatabase::new(project_metadata, system.clone())?;
+    let mut db = ProjectDatabase::new(project_metadata, system.clone())?;
+    db.project().set_included_paths(&mut db, vec![filter_path]);
     let db2 = db.clone();
     let project_path2 = project_path.clone();
     let target_exceptions = target_exception
         .iter()
         .map(|e| resolve_absolute_module_path(&db, e))
         .collect::<Vec<_>>();
-    let diagnostics: Vec<Diagnostic> =
-        analyze_project(project_path, db, Some(filter_path), target_exceptions, None)?.collect();
+    let diagnostics: Vec<Diagnostic> = analyze_project(db, target_exceptions, None)?.collect();
 
     let expected_file = File::new(&db2, FilePath::System(project_path2.join(test_file)));
     let source = source_text(&db2, expected_file);

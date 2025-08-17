@@ -1,6 +1,5 @@
 #![feature(extend_one)]
 use anyhow::Result;
-use anyhow::bail;
 use crossbeam::channel::Sender;
 use crossbeam::channel::bounded;
 use indicatif::ProgressBar;
@@ -9,7 +8,6 @@ use rayon::prelude::*;
 use ruff_db::diagnostic::Diagnostic;
 use ruff_db::files::File;
 use ruff_db::parsed::parsed_module;
-use ruff_db::system::SystemPathBuf;
 use ty_project::{Db, ProjectDatabase};
 use ty_python_semantic::ModuleName;
 use ty_python_semantic::resolve_module;
@@ -30,9 +28,7 @@ pub use transitive_error::exception::Exception;
 pub use transitive_error::extract::extract_exception;
 
 pub fn analyze_project(
-    project_path: SystemPathBuf,
     db: ProjectDatabase,
-    filter_path: Option<SystemPathBuf>,
     target_exceptions: Vec<crate::Exception>,
     progress_bar: Option<&'static ProgressBar>,
 ) -> Result<impl Iterator<Item = Diagnostic>> {
@@ -42,36 +38,12 @@ pub fn analyze_project(
         pb.set_length(files.len() as u64);
     }
 
-    if let Some(ref filter_path) = filter_path {
-        let project_path = project_path.as_str();
-        if !filter_path.starts_with(project_path) {
-            bail!(
-                "Filter path must be a subpath of the project path. filter_path: '{filter_path}', project_path: '{project_path}'"
-            )
-        }
-    };
     rayon::spawn(move || {
-        let filtered_files: Vec<File> = files
-            .into_par_iter()
-            .map_with(db.clone(), move |db, file| {
-                if filter_path.as_ref().is_none_or(|filter_path| {
-                    file.path(db)
-                        .as_system_path()
-                        .unwrap()
-                        .starts_with(filter_path)
-                }) {
-                    return Some(file);
-                }
-                None
-            })
-            .filter_map(|x| x)
-            .collect();
-
         if let Some(pb) = &progress_bar {
-            pb.set_length(filtered_files.len() as u64);
+            pb.set_length(files.len() as u64);
         }
 
-        filtered_files.into_par_iter().for_each_with(
+        files.into_par_iter().for_each_with(
             (db, target_exceptions),
             |(db, target_exceptions), file| {
                 let db2 = db.clone();
