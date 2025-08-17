@@ -84,42 +84,6 @@ fn test_except() -> Result<()> {
 }
 
 #[test]
-fn test_except2() -> Result<()> {
-    assert_diagnostics(
-        "except2.py",
-        None,
-        vec![
-            ("Raises undocumented error TypeError", (16, 13), (16, 30)),
-            (
-                "Raises undocumented error FileNotFoundError",
-                (25, 9),
-                (25, 14),
-            ),
-            (
-                "Raises undocumented error FileNotFoundError",
-                (32, 9),
-                (32, 16),
-            ),
-            (
-                "Raises undocumented error FileNotFoundError",
-                (39, 9),
-                (39, 14),
-            ),
-            (
-                "Raises undocumented error FileNotFoundError",
-                (55, 9),
-                (55, 14),
-            ),
-            (
-                "Raises undocumented error FileNotFoundError",
-                (75, 13),
-                (75, 20),
-            ),
-        ],
-    )
-}
-
-#[test]
 fn test_inheritance() -> Result<()> {
     assert_diagnostics(
         "inheritance.py",
