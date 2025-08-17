@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -9,7 +9,7 @@ use ruff_db::{
     max_parallelism,
     system::{OsSystem, SystemPath, SystemPathBuf},
 };
-use std::fmt::Write;
+use std::{fmt::Write, process::ExitCode};
 use std::sync::LazyLock;
 use ty_project::{
     Db, ProjectDatabase, ProjectMetadata, metadata::options::ProjectOptionsOverrides,
@@ -26,7 +26,7 @@ mod args;
 mod logging;
 mod printer;
 
-fn main() -> Result<()> {
+fn main() -> Result<ExitCode> {
     setup_rayon();
     let args = Cli::parse();
     // The base path to which all CLI arguments are relative to.
@@ -46,7 +46,7 @@ fn main() -> Result<()> {
     }
 }
 
-fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<()> {
+fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
     set_colored_override(check.color);
 
     let verbosity = check.verbosity.level();
@@ -117,7 +117,7 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<()> {
             "All checks passed!".green().bold()
         )?;
 
-        Ok(())
+        Ok(ExitCode::SUCCESS)
     } else {
         let diagnostics_count = diagnostics.len();
 
@@ -137,7 +137,7 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<()> {
             if diagnostics_count > 1 { "s" } else { "" }
         )?;
 
-        bail!("");
+        Ok(if diagnostics_count > 0 { ExitCode::FAILURE } else { ExitCode::SUCCESS })
     }
 }
 
