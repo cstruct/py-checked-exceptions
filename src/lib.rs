@@ -87,7 +87,7 @@ pub fn analyze_file(
             CallStack::new(),
             &ExceptionCaptureStack::new(),
         );
-        let diagnostics = compare_documented_exceptions(db, file, &func_def.body, &errors);
+        let diagnostics = compare_documented_exceptions(file, &func_def.body, &errors);
         for diagnostic in diagnostics {
             sender.send(diagnostic).unwrap();
         }

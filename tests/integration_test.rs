@@ -108,11 +108,18 @@ fn test_docstrings() -> Result<()> {
     assert_diagnostics(
         "docstrings.py",
         None,
-        vec![(
-            "Documents extra error that is never raised RuntimeError",
-            (14, 6),
-            (14, 18),
-        )],
+        vec![
+            (
+                "Documents extra error that is never raised RuntimeError",
+                (12, 9),
+                (12, 21),
+            ),
+            (
+                "Documents extra error that is never raised RuntimeError",
+                (19, 13),
+                (19, 25),
+            ),
+        ],
     )
 }
 

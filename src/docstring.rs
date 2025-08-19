@@ -2,57 +2,66 @@ use std::collections::HashSet;
 
 use itertools::Itertools;
 use ruff_db::{
-    Db,
     diagnostic::{Annotation, Diagnostic, DiagnosticId, LintName, Severity, Span},
     files::{File, FileRange},
-    source::source_text,
 };
 use ruff_linter::docstrings::extraction::docstring_from;
 use ruff_python_ast::Stmt;
-use ruff_source_file::{LineIndex, OneIndexed};
 use ruff_text_size::{Ranged, TextRange, TextSize};
 
 use crate::transitive_error::raise::FunctionRaise;
 
 pub fn compare_documented_exceptions(
-    db: &dyn Db,
     file: File,
     stmts: &[Stmt],
     errors: &[FunctionRaise],
 ) -> Vec<Diagnostic> {
-    let source = source_text(db, file);
-    let index = LineIndex::from_source_text(&source);
     let Some(docstring) = docstring_from(stmts) else {
         return errors.iter().map(|e| e.into()).collect();
     };
-    let lines = docstring.value.to_str().split("\n").collect_vec();
+    let lines = docstring
+        .value
+        .to_str()
+        .split("\n")
+        .map(|l| format!("{l}\n"))
+        .collect_vec();
     let Some((start_index, section_header)) = lines.iter().find_position(|l| l.contains("Raises:"))
     else {
         return errors.iter().map(|e| (e.into())).collect();
     };
-    let indent = count_whitespace_bytes_at_start(section_header) + 4;
+    let docstring_start = stmts[0].range().start();
+
+    let preceding_lines_offset = 4 + lines[1..=start_index]
+        .iter()
+        .fold(0, |acc, l| acc + l.len());
+    let docstring_indent = count_whitespace_chars_at_start(section_header);
+    let raises_list_line_start = docstring_start.to_usize() + preceding_lines_offset;
+
     let section_lines: Vec<_> = lines[start_index + 1..]
         .iter()
-        .take_while(|l| l.starts_with(" ".repeat(indent).as_str()))
+        .take_while(|l| l.starts_with(" ".repeat(docstring_indent + 4).as_str()))
         .collect();
-    let error_names: HashSet<_> = section_lines
+    let (_, error_names) = section_lines
         .iter()
-        .enumerate()
-        .filter_map(|(i, l)| {
+        .filter_map(|l| {
             let parts: Vec<_> = l.split(":").collect();
             if parts.len() == 2 {
                 let exc_name = parts[0].trim();
-                return Some((start_index + i + 1, exc_name));
+                return Some((l.len(), exc_name));
             }
             None
         })
-        .collect();
+        .fold(
+            (raises_list_line_start, HashSet::new()),
+            |(offset, mut es), (line_length, e)| {
+                let start = offset + docstring_indent + 4;
+                let end = start + e.len();
+                let range = TextRange::new(TextSize::new(start as u32), TextSize::new(end as u32));
+                es.insert((range, e));
+                (offset + docstring_indent + line_length, es)
+            },
+        );
     let errors: HashSet<_> = errors.iter().collect();
-
-    let start = stmts[0].range().start();
-    let lc = index.line_column(start, &source);
-    let doc_start_line = lc.line.get() + 1;
-    let doc_start_col = lc.column.get() + indent;
 
     let (undocumented_errors, extra_documented_errors) = difference_by_key(
         errors.into_iter(),
@@ -63,38 +72,21 @@ pub fn compare_documented_exceptions(
 
     let mut diagnostics: Vec<Diagnostic> =
         undocumented_errors.iter().map(|e| (*e).into()).collect();
-    diagnostics.extend(extra_documented_errors.iter().map(|(i, e)| {
-        let start_line = doc_start_line + i;
-        let start_col = doc_start_col;
-        let end_line = start_line;
-        let end_col = start_col + e.len();
-        let start = TextSize::new(
-            index
-                .line_start(OneIndexed::new(start_line).unwrap(), &source)
-                .to_u32()
-                + (start_col as u32),
-        );
-        let end = TextSize::new(
-            index
-                .line_start(OneIndexed::new(end_line).unwrap(), &source)
-                .to_u32()
-                + (end_col as u32),
-        );
+    diagnostics.extend(extra_documented_errors.iter().map(|(range, e)| {
         let mut diagnostic = Diagnostic::new(
             DiagnosticId::Lint(LintName::of("extra-documented-error")),
             Severity::Error,
             format!("Documents extra error that is never raised {e}"),
         );
         diagnostic.annotate(Annotation::primary(Span::from(FileRange::new(
-            file,
-            TextRange::new(start, end),
+            file, *range,
         ))));
         diagnostic
     }));
     diagnostics
 }
 
-fn count_whitespace_bytes_at_start(input: &str) -> usize {
+fn count_whitespace_chars_at_start(input: &str) -> usize {
     input
         .chars()
         .take_while(|ch| ch.is_whitespace() && *ch != '\n')

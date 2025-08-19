@@ -9,8 +9,8 @@ use ruff_db::{
     max_parallelism,
     system::{OsSystem, SystemPath, SystemPathBuf},
 };
-use std::{fmt::Write, process::ExitCode};
 use std::sync::LazyLock;
+use std::{fmt::Write, process::ExitCode};
 use ty_project::{
     Db, ProjectDatabase, ProjectMetadata, metadata::options::ProjectOptionsOverrides,
 };
@@ -137,7 +137,11 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
             if diagnostics_count > 1 { "s" } else { "" }
         )?;
 
-        Ok(if diagnostics_count > 0 { ExitCode::FAILURE } else { ExitCode::SUCCESS })
+        Ok(if diagnostics_count > 0 {
+            ExitCode::FAILURE
+        } else {
+            ExitCode::SUCCESS
+        })
     }
 }
 
