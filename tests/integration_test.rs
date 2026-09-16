@@ -239,6 +239,78 @@ fn test_higher_order_functions() -> Result<()> {
     )
 }
 
+#[test]
+fn test_context_manager_decorators() -> Result<()> {
+    assert_diagnostics(
+        "context_manager_decorators.py",
+        None,
+        vec![
+            ("Raises undocumented error BodyError", (128, 5), (128, 28)),
+            ("Raises undocumented error SetupError", (136, 5), (136, 28)),
+            (
+                "Raises undocumented error TeardownError",
+                (140, 5),
+                (140, 31),
+            ),
+            (
+                "Raises undocumented error TeardownError",
+                (152, 11),
+                (152, 43),
+            ),
+        ],
+    )
+}
+
+#[test]
+fn test_stdlib_higher_order_functions() -> Result<()> {
+    assert_diagnostics(
+        "stdlib_higher_order.py",
+        None,
+        vec![
+            (
+                "Raises undocumented error KeyCallbackError",
+                (42, 5),
+                (42, 41),
+            ),
+            (
+                "Raises undocumented error KeyCallbackError",
+                (46, 5),
+                (46, 38),
+            ),
+            (
+                "Raises undocumented error KeyCallbackError",
+                (50, 5),
+                (50, 38),
+            ),
+            (
+                "Raises undocumented error KeyCallbackError",
+                (55, 5),
+                (55, 41),
+            ),
+            (
+                "Raises undocumented error ReduceCallbackError",
+                (59, 5),
+                (59, 43),
+            ),
+            (
+                "Raises undocumented error ReplacementCallbackError",
+                (63, 5),
+                (63, 60),
+            ),
+            (
+                "Raises undocumented error ReplacementCallbackError",
+                (67, 5),
+                (67, 61),
+            ),
+            (
+                "Raises undocumented error KeyCallbackError",
+                (86, 5),
+                (86, 44),
+            ),
+        ],
+    )
+}
+
 fn assert_diagnostics(
     test_file: &str,
     target_exception: Option<String>,

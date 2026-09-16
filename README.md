@@ -108,6 +108,10 @@ This tool currently doesn't support:
 - Docstring formats other than Google style
 - Dynamic exception types
 
+## Future Work
+
+- Preserve exception effects through deferred callables such as `functools.partial` and `functools.partialmethod`
+
 ## Contributing
 
 Before contributing, install the git hooks:

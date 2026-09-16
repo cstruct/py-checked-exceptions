@@ -12,7 +12,8 @@ use ty_python_semantic::{ResolvedDefinition, definitions_for_attribute, definiti
 use crate::{
     module::ModuleCollector,
     transitive_error::{
-        call_stack::CallStack, capture_stack::ExceptionCaptureStack, exception::Exception,
+        call_stack::CallStack, capture_stack::ExceptionCaptureStack,
+        context_manager::apply_generator_context_manager, exception::Exception,
         extract::resolve_alias, raise::FunctionRaise, visitor::FunctionTransitiveErrorVisitor,
     },
 };
@@ -28,6 +29,20 @@ pub(crate) fn apply_decorators(
     mut errors: Vec<FunctionRaise>,
 ) -> Vec<FunctionRaise> {
     for decorator in function.decorator_list.iter().rev() {
+        if let Some(context_manager_errors) = apply_generator_context_manager(
+            db,
+            file,
+            &decorator.expression,
+            function.is_async,
+            target_exceptions,
+            call_stack.clone(),
+            exception_capture_stack,
+            errors.clone(),
+        ) {
+            errors = context_manager_errors;
+            continue;
+        }
+
         let (expression, is_factory) = match &decorator.expression {
             Expr::Call(call) => (call.func.as_ref(), true),
             expression => (expression, false),

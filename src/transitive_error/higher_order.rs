@@ -1,5 +1,5 @@
 use itertools::Itertools;
-use ruff_db::files::File;
+use ruff_db::files::{File, FilePath};
 use ruff_python_ast::{Expr, ExprCall};
 use ruff_text_size::Ranged;
 use ty_project::Db;
@@ -14,6 +14,35 @@ use crate::transitive_error::{
 };
 
 pub(crate) type CallableErrors = Vec<(String, Vec<FunctionRaise>)>;
+
+pub(crate) fn eager_stdlib_callback_errors(
+    db: &dyn Db,
+    file: File,
+    call: &ExprCall,
+    callable_errors: &CallableErrors,
+) -> Vec<FunctionRaise> {
+    let callback_parameters = definitions_for_expression(db, file, &call.func)
+        .into_iter()
+        .filter_map(|definition| {
+            let ResolvedDefinition::Definition(definition) = definition else {
+                return None;
+            };
+            eager_stdlib_callback_parameter(db, definition)
+        })
+        .collect_vec();
+
+    normalize_errors(
+        callable_errors
+            .iter()
+            .filter(|(parameter, _)| callback_parameters.contains(parameter))
+            .flat_map(|(_, errors)| {
+                errors
+                    .iter()
+                    .map(|error| error.transitive(file, call.range))
+            })
+            .collect(),
+    )
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn callable_errors_for_call(
@@ -135,4 +164,39 @@ fn callable_expression_errors(
         );
     }
     normalize_errors(errors)
+}
+
+fn eager_stdlib_callback_parameter(
+    db: &dyn Db,
+    definition: ty_python_semantic::semantic_index::definition::Definition<'_>,
+) -> Option<String> {
+    let name = definition.name(db)?;
+    let FilePath::Vendored(path) = definition.file(db).path(db) else {
+        return None;
+    };
+
+    match (path.as_str(), name.as_str()) {
+        (path, "sorted" | "min" | "max" | "sort") if path.ends_with("/builtins.pyi") => {
+            Some("key".into())
+        }
+        (path, "reduce") if path.ends_with("/functools.pyi") => Some("function".into()),
+        (path, "sub" | "subn")
+            if path.ends_with("/re.pyi") || path.ends_with("/re/__init__.pyi") =>
+        {
+            Some("repl".into())
+        }
+        _ => None,
+    }
+}
+
+fn definitions_for_expression<'a>(
+    db: &'a dyn Db,
+    file: File,
+    expression: &Expr,
+) -> Vec<ResolvedDefinition<'a>> {
+    match expression {
+        Expr::Name(name) => definitions_for_name(db, file, name),
+        Expr::Attribute(attribute) => definitions_for_attribute(db, file, attribute),
+        _ => Vec::new(),
+    }
 }

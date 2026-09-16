@@ -15,7 +15,9 @@ use crate::transitive_error::exception::Exception;
 use crate::transitive_error::extract::{
     extract_caught_exceptions, extract_errors, try_extract_exception_from_expr,
 };
-use crate::transitive_error::higher_order::{CallableErrors, callable_errors_for_call};
+use crate::transitive_error::higher_order::{
+    CallableErrors, callable_errors_for_call, eager_stdlib_callback_errors,
+};
 use crate::transitive_error::raise::FunctionRaise;
 
 pub(crate) fn get_transitive_errors<'a>(
@@ -375,6 +377,11 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                     self.call_stack.clone(),
                     &self.exception_capture_stack,
                     &self.callable_errors,
+                );
+                self.errors.extend(
+                    eager_stdlib_callback_errors(self.db, self.file, call, &callable_errors)
+                        .into_iter()
+                        .filter(|error| !self.exception_capture_stack.is_captured(error.name())),
                 );
                 for def in defs {
                     if let ResolvedDefinition::Definition(def) = def {
