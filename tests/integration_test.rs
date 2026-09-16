@@ -157,6 +157,51 @@ fn test_decorators() -> Result<()> {
     )
 }
 
+#[test]
+fn test_context_managers() -> Result<()> {
+    assert_diagnostics(
+        "context_managers.py",
+        None,
+        vec![
+            ("Raises undocumented error InitError", (122, 10), (122, 22)),
+            ("Raises undocumented error EnterError", (127, 10), (127, 23)),
+            ("Raises undocumented error ExitError", (132, 10), (132, 22)),
+            ("Raises undocumented error BodyError", (138, 9), (138, 26)),
+            ("Raises undocumented error ExitError", (147, 10), (147, 33)),
+            (
+                "Raises undocumented error AsyncEnterError",
+                (162, 16),
+                (162, 34),
+            ),
+            ("Raises undocumented error EnterError", (168, 10), (168, 17)),
+            ("Raises undocumented error EnterError", (187, 10), (187, 32)),
+            ("Raises undocumented error ExitError", (222, 16), (222, 33)),
+            ("Raises undocumented error ExitError", (253, 9), (253, 26)),
+        ],
+    )
+}
+
+#[test]
+fn test_generator_context_managers() -> Result<()> {
+    assert_diagnostics(
+        "generator_context_managers.py",
+        None,
+        vec![
+            ("Raises undocumented error BodyError", (118, 9), (118, 26)),
+            ("Raises undocumented error OtherError", (128, 9), (128, 27)),
+            ("Raises undocumented error BodyError", (132, 10), (132, 31)),
+            ("Raises undocumented error EnterError", (137, 10), (137, 34)),
+            ("Raises undocumented error ExitError", (142, 10), (142, 33)),
+            ("Raises undocumented error EnterError", (152, 34), (152, 51)),
+            ("Raises undocumented error EnterError", (162, 16), (162, 46)),
+            ("Raises undocumented error ExitError", (167, 16), (167, 45)),
+            ("Raises undocumented error EnterError", (183, 10), (183, 17)),
+            ("Raises undocumented error ExitError", (191, 10), (191, 29)),
+            ("Raises undocumented error ExitError", (197, 16), (197, 23)),
+        ],
+    )
+}
+
 fn assert_diagnostics(
     test_file: &str,
     target_exception: Option<String>,

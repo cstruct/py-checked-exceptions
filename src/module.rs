@@ -90,7 +90,7 @@ impl<'a> StatementVisitor<'a> for ModuleCollector<'a> {
             let mut fns = vec![];
             for cls_stmt in body {
                 if let Stmt::FunctionDef(def @ StmtFunctionDef { name, .. }) = cls_stmt
-                    && CLS_INIT_FNS.iter().any(|n| **name == **n)
+                    && CLASS_CONSTRUCTION_METHODS.iter().any(|n| **name == **n)
                 {
                     fns.push(def);
                 }
@@ -104,11 +104,4 @@ impl<'a> StatementVisitor<'a> for ModuleCollector<'a> {
     }
 }
 
-const CLS_INIT_FNS: [&str; 6] = [
-    "__init__",
-    "__new__",
-    "__enter__",
-    "__exit__",
-    "__aenter__",
-    "__aexit__",
-];
+const CLASS_CONSTRUCTION_METHODS: [&str; 2] = ["__init__", "__new__"];

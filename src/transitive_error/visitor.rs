@@ -1,12 +1,15 @@
 use itertools::Itertools;
 use ruff_db::files::File;
 use ruff_python_ast::visitor::{Visitor, walk_expr, walk_stmt};
-use ruff_python_ast::{Expr, ExprCall, Stmt, StmtFunctionDef, StmtTry};
+use ruff_python_ast::{Expr, ExprCall, Stmt, StmtFunctionDef, StmtTry, WithItem};
 use ty_project::Db;
 use ty_python_semantic::{ResolvedDefinition, definitions_for_attribute, definitions_for_name};
 
 use crate::transitive_error::call_stack::CallStack;
 use crate::transitive_error::capture_stack::ExceptionCaptureStack;
+use crate::transitive_error::context_manager::{
+    apply_generator_context_manager, context_manager_effects, is_generator_context_manager,
+};
 use crate::transitive_error::decorator::apply_decorators;
 use crate::transitive_error::exception::Exception;
 use crate::transitive_error::extract::{
@@ -52,6 +55,7 @@ pub(crate) struct FunctionTransitiveErrorVisitor<'a> {
     exception_capture_stack: ExceptionCaptureStack,
     try_block_exceptions: Vec<Vec<Exception>>,
     callable_errors: Vec<(String, Vec<FunctionRaise>)>,
+    yield_errors: Vec<FunctionRaise>,
 }
 
 impl<'a> FunctionTransitiveErrorVisitor<'a> {
@@ -73,6 +77,7 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
             exception_capture_stack: exception_capture_stack.clone(),
             try_block_exceptions: vec![],
             callable_errors: vec![],
+            yield_errors: vec![],
         }
     }
 
@@ -84,10 +89,91 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
         self
     }
 
+    pub(crate) fn with_yield_errors(mut self, yield_errors: Vec<FunctionRaise>) -> Self {
+        self.yield_errors = yield_errors;
+        self
+    }
+
     pub(crate) fn transitive_errors(&mut self) -> Vec<FunctionRaise> {
         self.visit_body(&self.func.body);
         self.errors = normalize_errors(self.errors.clone());
         self.errors.clone()
+    }
+
+    fn visit_with_items(&mut self, items: &'a [WithItem], body: &'a [Stmt], is_async: bool) {
+        let Some((item, remaining_items)) = items.split_first() else {
+            self.visit_body(body);
+            return;
+        };
+
+        let is_generator =
+            is_generator_context_manager(self.db, self.file, &item.context_expr, is_async);
+        // Calling a generator function only creates the context manager. Its arguments are
+        // evaluated now, while its body is evaluated around the yield below.
+        if is_generator {
+            self.visit_context_manager_arguments(&item.context_expr);
+        } else {
+            self.visit_expr(&item.context_expr);
+        }
+        let effects = context_manager_effects(
+            self.db,
+            self.file,
+            &item.context_expr,
+            is_async,
+            self.target_exceptions,
+            self.call_stack.clone(),
+            &self.exception_capture_stack,
+        );
+        self.errors.extend(effects.enter_errors);
+
+        // Multiple context managers are equivalent to nested `with` statements. An outer exit can
+        // therefore suppress failures from an inner enter, body, or exit, but never its own enter.
+        let protected_errors_start = self.errors.len();
+        self.visit_with_items(remaining_items, body, is_async);
+        if is_generator {
+            let protected_errors = self.errors.split_off(protected_errors_start);
+            if let Some(generator_errors) = apply_generator_context_manager(
+                self.db,
+                self.file,
+                &item.context_expr,
+                is_async,
+                self.target_exceptions,
+                self.call_stack.clone(),
+                &self.exception_capture_stack,
+                protected_errors,
+            ) {
+                self.errors.extend(generator_errors);
+            }
+            return;
+        }
+        if effects.suppresses_exceptions {
+            self.errors.truncate(protected_errors_start);
+        } else if !effects.suppressed_exceptions.is_empty() {
+            let mut protected_errors = self.errors.split_off(protected_errors_start);
+            protected_errors.retain(|error| {
+                !effects
+                    .suppressed_exceptions
+                    .iter()
+                    .any(|suppressed| error.name().is_subclass_of(suppressed))
+            });
+            self.errors.extend(protected_errors);
+        }
+        self.errors.extend(effects.exit_errors);
+    }
+
+    fn visit_context_manager_arguments(&mut self, expression: &'a Expr) {
+        let Some(call) = expression.as_call_expr() else {
+            return;
+        };
+        if let Expr::Attribute(attribute) = call.func.as_ref() {
+            self.visit_expr(&attribute.value);
+        }
+        for argument in &call.arguments.args {
+            self.visit_expr(argument);
+        }
+        for keyword in &call.arguments.keywords {
+            self.visit_expr(&keyword.value);
+        }
     }
 }
 
@@ -218,13 +304,34 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
             self.try_block_exceptions.pop();
             self.visit_body(orelse);
             self.visit_body(finalbody);
+        } else if let Stmt::With(with_statement) = stmt {
+            self.visit_with_items(
+                &with_statement.items,
+                &with_statement.body,
+                with_statement.is_async,
+            );
         } else {
             walk_stmt(self, stmt);
         }
     }
 
     fn visit_expr(&mut self, expr: &'a Expr) {
-        if let Expr::Call(call) = expr {
+        if matches!(expr, Expr::Yield(_)) {
+            self.errors.extend(
+                self.yield_errors
+                    .clone()
+                    .into_iter()
+                    .filter(|error| !self.exception_capture_stack.is_captured(error.name())),
+            );
+        } else if let Expr::Call(call) = expr {
+            // Calling a decorated generator creates a context manager without running its body.
+            // The body is analyzed when that value is used by a matching `with` statement.
+            if is_generator_context_manager(self.db, self.file, expr, false)
+                || is_generator_context_manager(self.db, self.file, expr, true)
+            {
+                self.visit_context_manager_arguments(expr);
+                return;
+            }
             let callable_errors = call.func.as_name_expr().and_then(|name| {
                 self.callable_errors
                     .iter()

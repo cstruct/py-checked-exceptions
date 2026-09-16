@@ -1,5 +1,6 @@
 pub(crate) mod call_stack;
 pub(crate) mod capture_stack;
+pub(crate) mod context_manager;
 pub(crate) mod decorator;
 pub(crate) mod exception;
 pub(crate) mod extract;
