@@ -1,6 +1,6 @@
 # py-checked-exceptions
 
-A static analyzer that enforces exception documentation in Python code. It verifies that all raised exceptions are documented in docstrings and flags any documented exceptions that are never actually raised. Built upon the excellent foundation provided by [Ruff and Ty](https://github.com/astral-sh/ruff).
+A static analyzer that enforces exception documentation in Python code. It verifies that all raised exceptions are documented in Google-style docstrings or FastAPI route response models, and flags docstring exceptions that are never actually raised. Built upon the excellent foundation provided by [Ruff and Ty](https://github.com/astral-sh/ruff).
 
 ![](./demo.gif)
 

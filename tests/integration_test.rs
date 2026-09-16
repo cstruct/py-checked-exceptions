@@ -123,6 +123,18 @@ fn test_docstrings() -> Result<()> {
     )
 }
 
+#[test]
+fn test_fastapi_response_models() -> Result<()> {
+    assert_diagnostics(
+        "fastapi.py",
+        None,
+        vec![
+            ("Raises undocumented error DirectError", (76, 5), (76, 24)),
+            ("Raises undocumented error DirectError", (85, 5), (85, 24)),
+        ],
+    )
+}
+
 fn assert_diagnostics(
     test_file: &str,
     target_exception: Option<String>,
