@@ -158,7 +158,7 @@ pub(crate) fn extract_caught_exceptions(
     vec![]
 }
 
-fn resolve_alias<'a>(
+pub(crate) fn resolve_alias<'a>(
     db: &'a dyn Db,
     module: &ParsedModuleRef,
     def_file: File,

@@ -135,6 +135,28 @@ fn test_fastapi_response_models() -> Result<()> {
     )
 }
 
+#[test]
+fn test_decorators() -> Result<()> {
+    assert_diagnostics(
+        "decorators.py",
+        None,
+        vec![
+            ("Raises undocumented error RuntimeError", (78, 5), (78, 25)),
+            ("Raises undocumented error RuntimeError", (83, 5), (83, 25)),
+            (
+                "Raises undocumented error RuntimeError",
+                (103, 5),
+                (103, 35),
+            ),
+            (
+                "Raises undocumented error RuntimeError",
+                (107, 5),
+                (107, 39),
+            ),
+        ],
+    )
+}
+
 fn assert_diagnostics(
     test_file: &str,
     target_exception: Option<String>,

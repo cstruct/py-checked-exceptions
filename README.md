@@ -103,7 +103,7 @@ File selection:
 
 This tool currently doesn't support:
 - Higher-order functions and exception propagation through them
-- Exception handling in decorators
+- Class-based decorators and decorators that return dynamically constructed callables
 - Proper context manager support (`__(a)enter__`/`__(a)exit__` methods)
 - Docstring formats other than Google style
 - Dynamic exception types

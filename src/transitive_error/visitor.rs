@@ -7,6 +7,7 @@ use ty_python_semantic::{ResolvedDefinition, definitions_for_attribute, definiti
 
 use crate::transitive_error::call_stack::CallStack;
 use crate::transitive_error::capture_stack::ExceptionCaptureStack;
+use crate::transitive_error::decorator::apply_decorators;
 use crate::transitive_error::exception::Exception;
 use crate::transitive_error::extract::{
     extract_caught_exceptions, extract_errors, try_extract_exception_from_expr,
@@ -21,15 +22,24 @@ pub(crate) fn get_transitive_errors<'a>(
     call_stack: CallStack,
     exception_capture_stack: &'a ExceptionCaptureStack,
 ) -> Vec<FunctionRaise> {
-    FunctionTransitiveErrorVisitor::new(
+    let errors = FunctionTransitiveErrorVisitor::new(
+        db,
+        file,
+        func,
+        target_exceptions,
+        call_stack.clone(),
+        exception_capture_stack,
+    )
+    .transitive_errors();
+    normalize_errors(apply_decorators(
         db,
         file,
         func,
         target_exceptions,
         call_stack,
         exception_capture_stack,
-    )
-    .transitive_errors()
+        errors,
+    ))
 }
 
 pub(crate) struct FunctionTransitiveErrorVisitor<'a> {
@@ -41,6 +51,7 @@ pub(crate) struct FunctionTransitiveErrorVisitor<'a> {
     call_stack: CallStack,
     exception_capture_stack: ExceptionCaptureStack,
     try_block_exceptions: Vec<Vec<Exception>>,
+    callable_errors: Vec<(String, Vec<FunctionRaise>)>,
 }
 
 impl<'a> FunctionTransitiveErrorVisitor<'a> {
@@ -61,20 +72,21 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
             call_stack,
             exception_capture_stack: exception_capture_stack.clone(),
             try_block_exceptions: vec![],
+            callable_errors: vec![],
         }
+    }
+
+    pub(crate) fn with_callable_errors(
+        mut self,
+        callable_errors: Vec<(String, Vec<FunctionRaise>)>,
+    ) -> Self {
+        self.callable_errors = callable_errors;
+        self
     }
 
     pub(crate) fn transitive_errors(&mut self) -> Vec<FunctionRaise> {
         self.visit_body(&self.func.body);
-        self.errors = self
-            .errors
-            .clone()
-            .into_iter()
-            .sorted_by_key(|e| e.sort_key())
-            .chunk_by(|e| e.group_key())
-            .into_iter()
-            .map(|(_, es)| es.into_iter().next().unwrap())
-            .collect();
+        self.errors = normalize_errors(self.errors.clone());
         self.errors.clone()
     }
 }
@@ -213,8 +225,21 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
 
     fn visit_expr(&mut self, expr: &'a Expr) {
         if let Expr::Call(call) = expr {
-            let defs = definitions_for_call_func(self.db, self.file, *call.func.clone());
-            if let Some(defs) = defs {
+            let callable_errors = call.func.as_name_expr().and_then(|name| {
+                self.callable_errors
+                    .iter()
+                    .find(|(callable, _)| callable == name.id.as_str())
+                    .map(|(_, errors)| errors.clone())
+            });
+            if let Some(callable_errors) = callable_errors {
+                self.errors.extend(
+                    callable_errors
+                        .into_iter()
+                        .filter(|error| !self.exception_capture_stack.is_captured(error.name())),
+                );
+            } else if let Some(defs) =
+                definitions_for_call_func(self.db, self.file, *call.func.clone())
+            {
                 for def in defs {
                     if let ResolvedDefinition::Definition(def) = def {
                         let definition_file = def.file(self.db);
@@ -251,6 +276,16 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
         }
         walk_expr(self, expr);
     }
+}
+
+pub(crate) fn normalize_errors(errors: Vec<FunctionRaise>) -> Vec<FunctionRaise> {
+    errors
+        .into_iter()
+        .sorted_by_key(|error| error.sort_key())
+        .chunk_by(|error| error.group_key())
+        .into_iter()
+        .map(|(_, errors)| errors.into_iter().next().unwrap())
+        .collect()
 }
 
 fn definitions_for_call_func<'a>(
