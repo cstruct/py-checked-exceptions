@@ -202,6 +202,43 @@ fn test_generator_context_managers() -> Result<()> {
     )
 }
 
+#[test]
+fn test_higher_order_functions() -> Result<()> {
+    assert_diagnostics(
+        "higher_order.py",
+        None,
+        vec![
+            ("Raises undocumented error CallbackError", (87, 5), (87, 34)),
+            ("Raises undocumented error CallbackError", (91, 5), (91, 51)),
+            (
+                "Raises undocumented error SecondCallbackError",
+                (99, 5),
+                (99, 74),
+            ),
+            (
+                "Raises undocumented error CallbackError",
+                (103, 5),
+                (103, 55),
+            ),
+            (
+                "Raises undocumented error CallbackError",
+                (107, 5),
+                (107, 41),
+            ),
+            (
+                "Raises undocumented error MethodCallbackError",
+                (120, 5),
+                (120, 24),
+            ),
+            (
+                "Raises undocumented error CallbackError",
+                (137, 5),
+                (137, 42),
+            ),
+        ],
+    )
+}
+
 fn assert_diagnostics(
     test_file: &str,
     target_exception: Option<String>,

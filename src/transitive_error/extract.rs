@@ -14,7 +14,8 @@ use crate::{
     module::ModuleCollector,
     transitive_error::{
         call_stack::CallStack, capture_stack::ExceptionCaptureStack, exception::Exception,
-        raise::FunctionRaise, visitor::get_transitive_errors,
+        higher_order::CallableErrors, raise::FunctionRaise,
+        visitor::get_transitive_errors_with_callable_errors,
     },
 };
 
@@ -30,6 +31,7 @@ fn extract_errors_cycle_fn<'db>(
     _target_exceptions: Vec<Exception>,
     _call_stack: CallStack,
     _exception_capture_stack: ExceptionCaptureStack,
+    _callable_errors: CallableErrors,
 ) -> salsa::CycleRecoveryAction<Vec<FunctionRaise>> {
     salsa::CycleRecoveryAction::Iterate
 }
@@ -44,6 +46,7 @@ fn extract_errors_initial<'db>(
     _target_exceptions: Vec<Exception>,
     _call_stack: CallStack,
     _exception_capture_stack: ExceptionCaptureStack,
+    _callable_errors: CallableErrors,
 ) -> Vec<FunctionRaise> {
     vec![]
 }
@@ -59,6 +62,7 @@ pub(crate) fn extract_errors<'db>(
     target_exceptions: Vec<Exception>,
     call_stack: CallStack,
     exception_capture_stack: ExceptionCaptureStack,
+    callable_errors: CallableErrors,
 ) -> Vec<FunctionRaise> {
     let module = parsed_module(db, definition_file).load(db);
     let Some((definition_file, definition)) =
@@ -78,13 +82,14 @@ pub(crate) fn extract_errors<'db>(
             definition_file.path(db).as_str().into(),
             func_def.name.as_str().into(),
         ));
-        let transitive_errors = get_transitive_errors(
+        let transitive_errors = get_transitive_errors_with_callable_errors(
             db,
             definition_file,
             func_def,
             &target_exceptions,
             new_stack,
             &exception_capture_stack,
+            callable_errors.clone(),
         );
         let transitive_errors = transitive_errors
             .iter()

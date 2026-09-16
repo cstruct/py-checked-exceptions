@@ -4,5 +4,6 @@ pub(crate) mod context_manager;
 pub(crate) mod decorator;
 pub(crate) mod exception;
 pub(crate) mod extract;
+pub(crate) mod higher_order;
 pub(crate) mod raise;
 pub(crate) mod visitor;

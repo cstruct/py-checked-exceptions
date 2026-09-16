@@ -102,7 +102,7 @@ File selection:
 ## Known Limitations
 
 This tool currently doesn't support:
-- Higher-order functions and exception propagation through them
+- Higher-order calls through `*args`, `**kwargs`, or dynamically stored and returned callables
 - Class-based decorators and decorators that return dynamically constructed callables
 - Dynamically determined `__(a)exit__` suppression
 - Docstring formats other than Google style

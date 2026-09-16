@@ -15,6 +15,7 @@ use crate::transitive_error::exception::Exception;
 use crate::transitive_error::extract::{
     extract_caught_exceptions, extract_errors, try_extract_exception_from_expr,
 };
+use crate::transitive_error::higher_order::{CallableErrors, callable_errors_for_call};
 use crate::transitive_error::raise::FunctionRaise;
 
 pub(crate) fn get_transitive_errors<'a>(
@@ -25,6 +26,27 @@ pub(crate) fn get_transitive_errors<'a>(
     call_stack: CallStack,
     exception_capture_stack: &'a ExceptionCaptureStack,
 ) -> Vec<FunctionRaise> {
+    get_transitive_errors_with_callable_errors(
+        db,
+        file,
+        func,
+        target_exceptions,
+        call_stack,
+        exception_capture_stack,
+        vec![],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn get_transitive_errors_with_callable_errors<'a>(
+    db: &'a dyn Db,
+    file: File,
+    func: &'a StmtFunctionDef,
+    target_exceptions: &Vec<Exception>,
+    call_stack: CallStack,
+    exception_capture_stack: &'a ExceptionCaptureStack,
+    callable_errors: CallableErrors,
+) -> Vec<FunctionRaise> {
     let errors = FunctionTransitiveErrorVisitor::new(
         db,
         file,
@@ -33,6 +55,7 @@ pub(crate) fn get_transitive_errors<'a>(
         call_stack.clone(),
         exception_capture_stack,
     )
+    .with_callable_errors(callable_errors)
     .transitive_errors();
     normalize_errors(apply_decorators(
         db,
@@ -54,7 +77,7 @@ pub(crate) struct FunctionTransitiveErrorVisitor<'a> {
     call_stack: CallStack,
     exception_capture_stack: ExceptionCaptureStack,
     try_block_exceptions: Vec<Vec<Exception>>,
-    callable_errors: Vec<(String, Vec<FunctionRaise>)>,
+    callable_errors: CallableErrors,
     yield_errors: Vec<FunctionRaise>,
 }
 
@@ -81,10 +104,7 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
         }
     }
 
-    pub(crate) fn with_callable_errors(
-        mut self,
-        callable_errors: Vec<(String, Vec<FunctionRaise>)>,
-    ) -> Self {
+    pub(crate) fn with_callable_errors(mut self, callable_errors: CallableErrors) -> Self {
         self.callable_errors = callable_errors;
         self
     }
@@ -347,6 +367,15 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
             } else if let Some(defs) =
                 definitions_for_call_func(self.db, self.file, *call.func.clone())
             {
+                let callable_errors = callable_errors_for_call(
+                    self.db,
+                    self.file,
+                    call,
+                    self.target_exceptions,
+                    self.call_stack.clone(),
+                    &self.exception_capture_stack,
+                    &self.callable_errors,
+                );
                 for def in defs {
                     if let ResolvedDefinition::Definition(def) = def {
                         let definition_file = def.file(self.db);
@@ -370,6 +399,7 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                             self.target_exceptions.clone(),
                             self.call_stack.clone(),
                             self.exception_capture_stack.clone(),
+                            callable_errors.clone(),
                         )
                         .to_vec();
                         self.errors.extend(
