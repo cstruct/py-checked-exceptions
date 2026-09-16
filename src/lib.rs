@@ -1,7 +1,7 @@
 #![feature(extend_one)]
 use anyhow::Result;
 use crossbeam::channel::Sender;
-use crossbeam::channel::bounded;
+use crossbeam::channel::{bounded, unbounded};
 use indicatif::ProgressBar;
 use itertools::Itertools;
 use rayon::prelude::*;
@@ -18,20 +18,42 @@ use crate::docstring::compare_documented_exceptions;
 use crate::module::ModuleCollector;
 use crate::transitive_error::call_stack::CallStack;
 use crate::transitive_error::capture_stack::ExceptionCaptureStack;
-use crate::transitive_error::visitor::get_transitive_errors;
+use crate::transitive_error::visitor::get_transitive_analysis;
 
 mod docstring;
 mod module;
 mod transitive_error;
 
+pub use transitive_error::analysis::{AnalysisGap, AnalysisGapImpact, AnalysisGapKind};
 pub use transitive_error::exception::Exception;
 pub use transitive_error::extract::extract_exception;
+
+#[derive(Clone, Debug)]
+pub enum AnalysisEvent {
+    Diagnostic(Diagnostic),
+    Gap(AnalysisGap),
+}
 
 pub fn analyze_project(
     db: ProjectDatabase,
     target_exceptions: Vec<crate::Exception>,
     progress_bar: Option<&'static ProgressBar>,
 ) -> Result<impl Iterator<Item = Diagnostic>> {
+    Ok(
+        analyze_project_with_gaps(db, target_exceptions, progress_bar)?.filter_map(|event| {
+            match event {
+                AnalysisEvent::Diagnostic(diagnostic) => Some(diagnostic),
+                AnalysisEvent::Gap(_) => None,
+            }
+        }),
+    )
+}
+
+pub fn analyze_project_with_gaps(
+    db: ProjectDatabase,
+    target_exceptions: Vec<crate::Exception>,
+    progress_bar: Option<&'static ProgressBar>,
+) -> Result<impl Iterator<Item = AnalysisEvent>> {
     let (sender, receiver) = bounded(10);
     let files = db.project().files(&db).clone();
     if let Some(pb) = &progress_bar {
@@ -47,7 +69,7 @@ pub fn analyze_project(
             (db, target_exceptions),
             |(db, target_exceptions), file| {
                 let db2 = db.clone();
-                analyze_file(db, &sender, file, target_exceptions);
+                analyze_file_with_gaps(db, &sender, file, target_exceptions);
                 if let Some(pb) = &progress_bar {
                     pb.set_message(file.path(&db2).as_str().to_string());
                     pb.inc(1);
@@ -67,11 +89,31 @@ pub fn analyze_file(
     file: File,
     target_exceptions: &Vec<crate::Exception>,
 ) {
+    let (event_sender, event_receiver) = unbounded();
+    analyze_file_with_gaps(db, &event_sender, file, target_exceptions);
+    drop(event_sender);
+    for event in event_receiver {
+        if let AnalysisEvent::Diagnostic(diagnostic) = event {
+            sender.send(diagnostic).unwrap();
+        }
+    }
+}
+
+fn analyze_file_with_gaps(
+    db: &mut ProjectDatabase,
+    sender: &Sender<AnalysisEvent>,
+    file: File,
+    target_exceptions: &Vec<crate::Exception>,
+) {
     let module = parsed_module(db, file);
     let module_ref = module.load(db);
     module_ref.clone().errors().iter().for_each(|error| {
         sender
-            .send(Diagnostic::invalid_syntax(file, &error.error, error))
+            .send(AnalysisEvent::Diagnostic(Diagnostic::invalid_syntax(
+                file,
+                &error.error,
+                error,
+            )))
             .unwrap()
     });
 
@@ -79,7 +121,7 @@ pub fn analyze_file(
     module_collector.init(&module_ref);
 
     for func_def in module_collector.list_functions() {
-        let errors = get_transitive_errors(
+        let analysis = get_transitive_analysis(
             db,
             file,
             func_def,
@@ -87,9 +129,12 @@ pub fn analyze_file(
             CallStack::new(),
             &ExceptionCaptureStack::new(),
         );
-        let diagnostics = compare_documented_exceptions(file, func_def, &errors);
+        let diagnostics = compare_documented_exceptions(db, file, func_def, &analysis.errors);
         for diagnostic in diagnostics {
-            sender.send(diagnostic).unwrap();
+            sender.send(AnalysisEvent::Diagnostic(diagnostic)).unwrap();
+        }
+        for gap in analysis.gaps {
+            sender.send(AnalysisEvent::Gap(gap)).unwrap();
         }
     }
 }

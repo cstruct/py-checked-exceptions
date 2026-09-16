@@ -8,16 +8,21 @@ use ruff_db::{
 use ruff_linter::docstrings::extraction::docstring_from;
 use ruff_python_ast::{Expr, Operator, Stmt, StmtFunctionDef};
 use ruff_text_size::{Ranged, TextRange, TextSize};
+use ty_project::Db;
 
+use crate::transitive_error::exception::{
+    canonical_exception_expression, canonical_exception_name,
+};
 use crate::transitive_error::raise::FunctionRaise;
 
 pub fn compare_documented_exceptions(
+    db: &dyn Db,
     file: File,
     function: &StmtFunctionDef,
     errors: &[FunctionRaise],
 ) -> Vec<Diagnostic> {
     let documented_docstring_errors = documented_docstring_exceptions(&function.body);
-    let documented_fastapi_errors = documented_fastapi_response_models(function);
+    let documented_fastapi_errors = documented_fastapi_response_models(db, file, function);
     let documented_errors = documented_docstring_errors
         .iter()
         .chain(&documented_fastapi_errors)
@@ -29,8 +34,8 @@ pub fn compare_documented_exceptions(
     let (undocumented_errors, _) = difference_by_key(
         errors.iter().copied(),
         documented_errors.into_iter(),
-        |e| e.name().name.clone(),
-        |(_, e)| e.clone(),
+        |e| canonical_exception_name(&e.name().name),
+        |(_, e)| canonical_exception_name(e),
     );
     // A FastAPI response can be emitted by framework or middleware code that isn't visible from
     // the route body. Only explicitly documented docstring errors are therefore checked for
@@ -38,8 +43,8 @@ pub fn compare_documented_exceptions(
     let (_, extra_documented_errors) = difference_by_key(
         errors.into_iter(),
         documented_docstring_errors.into_iter(),
-        |e| e.name().name.clone(),
-        |(_, e)| e.clone(),
+        |e| canonical_exception_name(&e.name().name),
+        |(_, e)| canonical_exception_name(e),
     );
 
     let mut diagnostics: Vec<Diagnostic> =
@@ -107,7 +112,11 @@ fn documented_docstring_exceptions(stmts: &[Stmt]) -> Vec<(TextRange, String)> {
     error_names.into_iter().collect()
 }
 
-fn documented_fastapi_response_models(function: &StmtFunctionDef) -> Vec<(TextRange, String)> {
+fn documented_fastapi_response_models(
+    db: &dyn Db,
+    file: File,
+    function: &StmtFunctionDef,
+) -> Vec<(TextRange, String)> {
     function
         .decorator_list
         .iter()
@@ -129,7 +138,7 @@ fn documented_fastapi_response_models(function: &StmtFunctionDef) -> Vec<(TextRa
                     .is_some_and(|key| key.value.to_str() == "model")
             })
         })
-        .flat_map(|item| response_model_names(&item.value))
+        .flat_map(|item| response_model_names(db, file, &item.value))
         .collect()
 }
 
@@ -151,17 +160,21 @@ fn is_fastapi_route_decorator(expression: &Expr) -> bool {
         .is_some_and(|attribute| ROUTE_METHODS.contains(&attribute.attr.as_str()))
 }
 
-fn response_model_names(expression: &Expr) -> Vec<(TextRange, String)> {
+fn response_model_names(db: &dyn Db, file: File, expression: &Expr) -> Vec<(TextRange, String)> {
     match expression {
         Expr::BinOp(binary) if binary.op == Operator::BitOr => {
-            let mut names = response_model_names(&binary.left);
-            names.extend(response_model_names(&binary.right));
+            let mut names = response_model_names(db, file, &binary.left);
+            names.extend(response_model_names(db, file, &binary.right));
             names
         }
         Expr::Subscript(subscript) if is_union_type(&subscript.value) => {
             match subscript.slice.as_ref() {
-                Expr::Tuple(tuple) => tuple.elts.iter().flat_map(response_model_names).collect(),
-                slice => response_model_names(slice),
+                Expr::Tuple(tuple) => tuple
+                    .elts
+                    .iter()
+                    .flat_map(|element| response_model_names(db, file, element))
+                    .collect(),
+                slice => response_model_names(db, file, slice),
             }
         }
         Expr::Subscript(subscript) if is_annotated_type(&subscript.value) => {
@@ -169,12 +182,25 @@ fn response_model_names(expression: &Expr) -> Vec<(TextRange, String)> {
                 Expr::Tuple(tuple) => tuple
                     .elts
                     .first()
-                    .map(response_model_names)
+                    .map(|element| response_model_names(db, file, element))
                     .unwrap_or_default(),
-                slice => response_model_names(slice),
+                slice => response_model_names(db, file, slice),
             }
         }
-        Expr::Subscript(subscript) => response_model_name(&subscript.value).into_iter().collect(),
+        Expr::Subscript(subscript) => response_model_name(&subscript.value)
+            .map(|(base_range, base)| {
+                vec![
+                    (base_range, base.clone()),
+                    (
+                        subscript.range,
+                        format!(
+                            "{base}[{}]",
+                            canonical_exception_expression(db, file, &subscript.slice)
+                        ),
+                    ),
+                ]
+            })
+            .unwrap_or_default(),
         _ => response_model_name(expression).into_iter().collect(),
     }
 }

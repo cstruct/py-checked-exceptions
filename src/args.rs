@@ -77,6 +77,16 @@ pub(crate) struct CheckCommand {
     #[arg(long)]
     pub(crate) output_format: Option<OutputFormat>,
 
+    /// Report places where exception analysis is incomplete.
+    #[arg(
+        long = "show-analysis-gaps",
+        value_name = "LEVEL",
+        default_missing_value = "summary",
+        num_args = 0..=1,
+        require_equals = true
+    )]
+    pub(crate) analysis_gaps: Option<AnalysisGapOutput>,
+
     /// Control when colored output is used.
     #[arg(long, value_name = "WHEN")]
     pub(crate) color: Option<TerminalColor>,
@@ -100,6 +110,14 @@ pub(crate) struct CheckCommand {
     /// Supports patterns like `tests/`, `*.tmp`, `**/__pycache__/**`.
     #[arg(long, help_heading = "File selection")]
     exclude: Option<Vec<String>>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum AnalysisGapOutput {
+    /// Print counts grouped by the reason analysis was incomplete.
+    Summary,
+    /// Print source diagnostics as well as the summary.
+    Full,
 }
 
 impl CheckCommand {
@@ -185,4 +203,38 @@ pub(crate) enum TerminalColor {
 
     /// Never display colors.
     Never,
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::{AnalysisGapOutput, Cli, Command};
+
+    #[test]
+    fn analysis_gap_output_is_opt_in() {
+        let cli = Cli::try_parse_from(["py-checked-exceptions", "check"]).unwrap();
+        let Command::Check(check) = cli.command;
+        assert_eq!(check.analysis_gaps, None);
+    }
+
+    #[test]
+    fn analysis_gap_output_defaults_to_summary() {
+        let cli = Cli::try_parse_from(["py-checked-exceptions", "check", "--show-analysis-gaps"])
+            .unwrap();
+        let Command::Check(check) = cli.command;
+        assert_eq!(check.analysis_gaps, Some(AnalysisGapOutput::Summary));
+    }
+
+    #[test]
+    fn analysis_gap_output_accepts_full() {
+        let cli = Cli::try_parse_from([
+            "py-checked-exceptions",
+            "check",
+            "--show-analysis-gaps=full",
+        ])
+        .unwrap();
+        let Command::Check(check) = cli.command;
+        assert_eq!(check.analysis_gaps, Some(AnalysisGapOutput::Full));
+    }
 }

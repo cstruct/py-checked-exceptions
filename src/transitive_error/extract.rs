@@ -13,16 +13,19 @@ use ty_python_semantic::{
 use crate::{
     module::ModuleCollector,
     transitive_error::{
-        call_stack::CallStack, capture_stack::ExceptionCaptureStack, exception::Exception,
-        higher_order::CallableErrors, raise::FunctionRaise,
-        visitor::get_transitive_errors_with_callable_errors,
+        analysis::{AnalysisGap, AnalysisGapImpact, AnalysisGapKind, FunctionAnalysis},
+        call_stack::CallStack,
+        capture_stack::ExceptionCaptureStack,
+        exception::{Exception, canonical_exception_expression},
+        higher_order::CallableErrors,
+        visitor::get_transitive_analysis_with_callable_errors,
     },
 };
 
 #[allow(clippy::too_many_arguments)]
 fn extract_errors_cycle_fn<'db>(
     _db: &'db dyn Db,
-    _value: &[FunctionRaise],
+    _value: &FunctionAnalysis,
     _count: u32,
     _expr_file: File,
     _expr_range: TextRange,
@@ -32,7 +35,7 @@ fn extract_errors_cycle_fn<'db>(
     _call_stack: CallStack,
     _exception_capture_stack: ExceptionCaptureStack,
     _callable_errors: CallableErrors,
-) -> salsa::CycleRecoveryAction<Vec<FunctionRaise>> {
+) -> salsa::CycleRecoveryAction<FunctionAnalysis> {
     salsa::CycleRecoveryAction::Iterate
 }
 
@@ -47,13 +50,13 @@ fn extract_errors_initial<'db>(
     _call_stack: CallStack,
     _exception_capture_stack: ExceptionCaptureStack,
     _callable_errors: CallableErrors,
-) -> Vec<FunctionRaise> {
-    vec![]
+) -> FunctionAnalysis {
+    FunctionAnalysis::default()
 }
 
 #[allow(clippy::too_many_arguments)]
-#[salsa::tracked(returns(deref), cycle_fn=extract_errors_cycle_fn, cycle_initial=extract_errors_initial, heap_size=ruff_memory_usage::heap_size)]
-pub(crate) fn extract_errors<'db>(
+#[salsa::tracked(returns(clone), cycle_fn=extract_errors_cycle_fn, cycle_initial=extract_errors_initial, heap_size=ruff_memory_usage::heap_size)]
+pub(crate) fn extract_analysis<'db>(
     db: &'db dyn Db,
     expr_file: File,
     expr_range: TextRange,
@@ -63,26 +66,52 @@ pub(crate) fn extract_errors<'db>(
     call_stack: CallStack,
     exception_capture_stack: ExceptionCaptureStack,
     callable_errors: CallableErrors,
-) -> Vec<FunctionRaise> {
+) -> FunctionAnalysis {
     let module = parsed_module(db, definition_file).load(db);
     let Some((definition_file, definition)) =
         resolve_alias(db, &module, definition_file, definition)
     else {
-        return vec![];
+        return FunctionAnalysis {
+            errors: vec![],
+            gaps: vec![AnalysisGap::new(
+                AnalysisGapKind::DynamicCall,
+                AnalysisGapImpact::MayMissErrors,
+                expr_file,
+                expr_range,
+                definition.name(db).map(|name| name.to_string()),
+            )],
+        };
     };
+    if matches!(
+        definition_file.path(db),
+        ruff_db::files::FilePath::System(path) if path.extension() == Some("pyi")
+    ) {
+        return FunctionAnalysis {
+            errors: vec![],
+            gaps: vec![AnalysisGap::new(
+                AnalysisGapKind::OpaqueCall,
+                AnalysisGapImpact::MayMissErrors,
+                expr_file,
+                expr_range,
+                definition.name(db).map(|name| name.to_string()),
+            )],
+        };
+    }
     let module = parsed_module(db, definition_file).load(db);
     let mut module_collector = ModuleCollector::new();
     module_collector.init(&module);
     let full_range = definition.full_range(db, &module);
 
-    let mut errors = vec![];
+    let mut analysis = FunctionAnalysis::default();
+    let mut found_function = false;
 
     for func_def in module_collector.find_functions(&full_range.range()) {
+        found_function = true;
         let new_stack = call_stack.push((
             definition_file.path(db).as_str().into(),
             func_def.name.as_str().into(),
         ));
-        let transitive_errors = get_transitive_errors_with_callable_errors(
+        let transitive = get_transitive_analysis_with_callable_errors(
             db,
             definition_file,
             func_def,
@@ -91,12 +120,28 @@ pub(crate) fn extract_errors<'db>(
             &exception_capture_stack,
             callable_errors.clone(),
         );
-        let transitive_errors = transitive_errors
+        let transitive_errors = transitive
+            .errors
             .iter()
             .map(|e| e.transitive(expr_file, expr_range));
-        errors.extend(transitive_errors);
+        analysis.errors.extend(transitive_errors);
+        analysis.gaps.extend(transitive.gaps);
     }
-    errors
+    if !found_function
+        && matches!(
+            definition_file.path(db),
+            ruff_db::files::FilePath::SystemVirtual(_)
+        )
+    {
+        analysis.gaps.push(AnalysisGap::new(
+            AnalysisGapKind::OpaqueCall,
+            AnalysisGapImpact::MayMissErrors,
+            expr_file,
+            expr_range,
+            definition.name(db).map(|name| name.to_string()),
+        ));
+    }
+    analysis
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -189,6 +234,12 @@ pub(crate) fn try_extract_exception_from_expr(
     file: File,
     expr: &Expr,
 ) -> Option<Exception> {
+    if let Expr::Subscript(subscript) = expr {
+        let exception = try_extract_exception_from_expr(db, file, &subscript.value)?;
+        let arguments = canonical_exception_expression(db, file, &subscript.slice);
+        return Some(exception.with_type_arguments(arguments));
+    }
+
     let defs = match *expr {
         Expr::Name(ref name) => definitions_for_name(db, file, name),
         Expr::Attribute(ref attr) => definitions_for_attribute(db, file, attr),

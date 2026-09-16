@@ -2,9 +2,13 @@ use itertools::Itertools;
 use ruff_db::files::File;
 use ruff_python_ast::visitor::{Visitor, walk_expr, walk_stmt};
 use ruff_python_ast::{Expr, ExprCall, Stmt, StmtFunctionDef, StmtTry, WithItem};
+use ruff_text_size::Ranged;
 use ty_project::Db;
 use ty_python_semantic::{ResolvedDefinition, definitions_for_attribute, definitions_for_name};
 
+use crate::transitive_error::analysis::{
+    AnalysisGap, AnalysisGapImpact, AnalysisGapKind, FunctionAnalysis,
+};
 use crate::transitive_error::call_stack::CallStack;
 use crate::transitive_error::capture_stack::ExceptionCaptureStack;
 use crate::transitive_error::context_manager::{
@@ -13,22 +17,22 @@ use crate::transitive_error::context_manager::{
 use crate::transitive_error::decorator::apply_decorators;
 use crate::transitive_error::exception::Exception;
 use crate::transitive_error::extract::{
-    extract_caught_exceptions, extract_errors, try_extract_exception_from_expr,
+    extract_analysis, extract_caught_exceptions, try_extract_exception_from_expr,
 };
 use crate::transitive_error::higher_order::{
-    CallableErrors, callable_errors_for_call, eager_stdlib_callback_errors,
+    CallableErrors, callable_analysis_for_call, eager_stdlib_callback_errors,
 };
 use crate::transitive_error::raise::FunctionRaise;
 
-pub(crate) fn get_transitive_errors<'a>(
+pub(crate) fn get_transitive_analysis<'a>(
     db: &'a dyn Db,
     file: File,
     func: &'a StmtFunctionDef,
     target_exceptions: &Vec<Exception>,
     call_stack: CallStack,
     exception_capture_stack: &'a ExceptionCaptureStack,
-) -> Vec<FunctionRaise> {
-    get_transitive_errors_with_callable_errors(
+) -> FunctionAnalysis {
+    get_transitive_analysis_with_callable_errors(
         db,
         file,
         func,
@@ -40,7 +44,7 @@ pub(crate) fn get_transitive_errors<'a>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn get_transitive_errors_with_callable_errors<'a>(
+pub(crate) fn get_transitive_analysis_with_callable_errors<'a>(
     db: &'a dyn Db,
     file: File,
     func: &'a StmtFunctionDef,
@@ -48,8 +52,8 @@ pub(crate) fn get_transitive_errors_with_callable_errors<'a>(
     call_stack: CallStack,
     exception_capture_stack: &'a ExceptionCaptureStack,
     callable_errors: CallableErrors,
-) -> Vec<FunctionRaise> {
-    let errors = FunctionTransitiveErrorVisitor::new(
+) -> FunctionAnalysis {
+    let analysis = FunctionTransitiveErrorVisitor::new(
         db,
         file,
         func,
@@ -58,16 +62,16 @@ pub(crate) fn get_transitive_errors_with_callable_errors<'a>(
         exception_capture_stack,
     )
     .with_callable_errors(callable_errors)
-    .transitive_errors();
-    normalize_errors(apply_decorators(
+    .transitive_analysis();
+    apply_decorators(
         db,
         file,
         func,
         target_exceptions,
         call_stack,
         exception_capture_stack,
-        errors,
-    ))
+        analysis,
+    )
 }
 
 pub(crate) struct FunctionTransitiveErrorVisitor<'a> {
@@ -76,6 +80,7 @@ pub(crate) struct FunctionTransitiveErrorVisitor<'a> {
     func: &'a StmtFunctionDef,
     target_exceptions: &'a Vec<Exception>,
     errors: Vec<FunctionRaise>,
+    gaps: Vec<AnalysisGap>,
     call_stack: CallStack,
     exception_capture_stack: ExceptionCaptureStack,
     try_block_exceptions: Vec<Vec<Exception>>,
@@ -98,6 +103,7 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
             func,
             target_exceptions,
             errors: vec![],
+            gaps: vec![],
             call_stack,
             exception_capture_stack: exception_capture_stack.clone(),
             try_block_exceptions: vec![],
@@ -116,10 +122,15 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
         self
     }
 
-    pub(crate) fn transitive_errors(&mut self) -> Vec<FunctionRaise> {
+    pub(crate) fn transitive_analysis(&mut self) -> FunctionAnalysis {
         self.visit_body(&self.func.body);
         self.errors = normalize_errors(self.errors.clone());
-        self.errors.clone()
+        let mut seen = std::collections::HashSet::new();
+        self.gaps.retain(|gap| seen.insert(gap.clone()));
+        FunctionAnalysis {
+            errors: self.errors.clone(),
+            gaps: self.gaps.clone(),
+        }
     }
 
     fn visit_with_items(&mut self, items: &'a [WithItem], body: &'a [Stmt], is_async: bool) {
@@ -146,6 +157,16 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
             self.call_stack.clone(),
             &self.exception_capture_stack,
         );
+        self.gaps.extend(effects.gaps.clone());
+        if !is_generator && !effects.recognized {
+            self.gaps.push(AnalysisGap::new(
+                AnalysisGapKind::UnmodeledContextManager,
+                AnalysisGapImpact::Both,
+                self.file,
+                item.context_expr.range(),
+                None,
+            ));
+        }
         self.errors.extend(effects.enter_errors);
 
         // Multiple context managers are equivalent to nested `with` statements. An outer exit can
@@ -154,7 +175,7 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
         self.visit_with_items(remaining_items, body, is_async);
         if is_generator {
             let protected_errors = self.errors.split_off(protected_errors_start);
-            if let Some(generator_errors) = apply_generator_context_manager(
+            if let Some(generator_analysis) = apply_generator_context_manager(
                 self.db,
                 self.file,
                 &item.context_expr,
@@ -164,7 +185,8 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
                 &self.exception_capture_stack,
                 protected_errors,
             ) {
-                self.errors.extend(generator_errors);
+                self.errors.extend(generator_analysis.errors);
+                self.gaps.extend(generator_analysis.gaps);
             }
             return;
         }
@@ -369,7 +391,16 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
             } else if let Some(defs) =
                 definitions_for_call_func(self.db, self.file, *call.func.clone())
             {
-                let callable_errors = callable_errors_for_call(
+                if defs.is_empty() {
+                    self.gaps.push(AnalysisGap::new(
+                        AnalysisGapKind::DynamicCall,
+                        AnalysisGapImpact::MayMissErrors,
+                        self.file,
+                        call.range,
+                        None,
+                    ));
+                }
+                let callable_analysis = callable_analysis_for_call(
                     self.db,
                     self.file,
                     call,
@@ -378,26 +409,50 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                     &self.exception_capture_stack,
                     &self.callable_errors,
                 );
+                self.gaps.extend(callable_analysis.gaps);
                 self.errors.extend(
-                    eager_stdlib_callback_errors(self.db, self.file, call, &callable_errors)
-                        .into_iter()
-                        .filter(|error| !self.exception_capture_stack.is_captured(error.name())),
+                    eager_stdlib_callback_errors(
+                        self.db,
+                        self.file,
+                        call,
+                        &callable_analysis.errors,
+                    )
+                    .into_iter()
+                    .filter(|error| !self.exception_capture_stack.is_captured(error.name())),
                 );
+                let mut resolved_definition = false;
                 for def in defs {
                     if let ResolvedDefinition::Definition(def) = def {
+                        resolved_definition = true;
                         let definition_file = def.file(self.db);
                         let definition_path = match definition_file.path(self.db) {
                             ruff_db::files::FilePath::System(path) => path,
-                            ruff_db::files::FilePath::SystemVirtual(_) => continue,
+                            ruff_db::files::FilePath::SystemVirtual(_) => {
+                                self.gaps.push(AnalysisGap::new(
+                                    AnalysisGapKind::OpaqueCall,
+                                    AnalysisGapImpact::MayMissErrors,
+                                    self.file,
+                                    call.range,
+                                    def.name(self.db).map(|name| name.to_string()),
+                                ));
+                                continue;
+                            }
                             ruff_db::files::FilePath::Vendored(_) => continue,
                         };
                         if let Some(name) = def.name(self.db) {
-                            let key = (definition_path.as_str().into(), name);
+                            let key = (definition_path.as_str().into(), name.clone());
                             if self.call_stack.contains(&key) {
+                                self.gaps.push(AnalysisGap::new(
+                                    AnalysisGapKind::AnalysisCutoff,
+                                    AnalysisGapImpact::MayMissErrors,
+                                    self.file,
+                                    call.range,
+                                    Some(name.to_string()),
+                                ));
                                 continue;
                             }
                         }
-                        let transitive_errors = extract_errors(
+                        let transitive = extract_analysis(
                             self.db,
                             self.file,
                             call.range,
@@ -406,16 +461,35 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                             self.target_exceptions.clone(),
                             self.call_stack.clone(),
                             self.exception_capture_stack.clone(),
-                            callable_errors.clone(),
+                            callable_analysis.errors.clone(),
                         )
-                        .to_vec();
+                        .clone();
                         self.errors.extend(
-                            transitive_errors
+                            transitive
+                                .errors
                                 .into_iter()
                                 .filter(|e| !self.exception_capture_stack.is_captured(e.name())),
-                        )
+                        );
+                        self.gaps.extend(transitive.gaps);
                     }
                 }
+                if !resolved_definition {
+                    self.gaps.push(AnalysisGap::new(
+                        AnalysisGapKind::DynamicCall,
+                        AnalysisGapImpact::MayMissErrors,
+                        self.file,
+                        call.range,
+                        None,
+                    ));
+                }
+            } else {
+                self.gaps.push(AnalysisGap::new(
+                    AnalysisGapKind::DynamicCall,
+                    AnalysisGapImpact::MayMissErrors,
+                    self.file,
+                    call.range,
+                    None,
+                ));
             }
         }
         walk_expr(self, expr);

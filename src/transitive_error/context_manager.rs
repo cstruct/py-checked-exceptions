@@ -16,12 +16,13 @@ use ty_python_semantic::{
 use crate::{
     module::ModuleCollector,
     transitive_error::{
+        analysis::{AnalysisGap, AnalysisGapImpact, AnalysisGapKind, FunctionAnalysis},
         call_stack::CallStack,
         capture_stack::ExceptionCaptureStack,
         exception::Exception,
         extract::{resolve_alias, try_extract_exception_from_expr},
         raise::FunctionRaise,
-        visitor::{FunctionTransitiveErrorVisitor, get_transitive_errors},
+        visitor::{FunctionTransitiveErrorVisitor, get_transitive_analysis},
     },
 };
 
@@ -31,6 +32,8 @@ pub(crate) struct ContextManagerEffects {
     pub(crate) exit_errors: Vec<FunctionRaise>,
     pub(crate) suppresses_exceptions: bool,
     pub(crate) suppressed_exceptions: Vec<Exception>,
+    pub(crate) gaps: Vec<AnalysisGap>,
+    pub(crate) recognized: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -75,6 +78,7 @@ pub(crate) fn context_manager_effects(
     effects.suppresses_exceptions = exit_methods > 0 && all_exit_methods_suppress;
     if let Some(suppressed_exceptions) = contextlib_suppressed_exceptions(db, file, expression) {
         effects.suppressed_exceptions = suppressed_exceptions;
+        effects.recognized = true;
     }
     effects
 }
@@ -98,8 +102,8 @@ pub(crate) fn apply_generator_context_manager(
     call_stack: CallStack,
     exception_capture_stack: &ExceptionCaptureStack,
     body_errors: Vec<FunctionRaise>,
-) -> Option<Vec<FunctionRaise>> {
-    let mut errors = Vec::new();
+) -> Option<FunctionAnalysis> {
+    let mut analysis = FunctionAnalysis::default();
     let found = generator_context_manager_functions(
         db,
         call_file,
@@ -114,7 +118,7 @@ pub(crate) fn apply_generator_context_manager(
             if call_stack.contains(&key) {
                 return;
             }
-            let function_errors = FunctionTransitiveErrorVisitor::new(
+            let function_analysis = FunctionTransitiveErrorVisitor::new(
                 db,
                 definition_file,
                 function,
@@ -123,17 +127,20 @@ pub(crate) fn apply_generator_context_manager(
                 exception_capture_stack,
             )
             .with_yield_errors(body_errors.clone())
-            .transitive_errors();
-            errors.extend(function_errors.into_iter().map(|error| {
-                if body_errors.contains(&error) {
-                    error
-                } else {
-                    error.transitive(call_file, expression.range())
-                }
-            }));
+            .transitive_analysis();
+            analysis
+                .errors
+                .extend(function_analysis.errors.into_iter().map(|error| {
+                    if body_errors.contains(&error) {
+                        error
+                    } else {
+                        error.transitive(call_file, expression.range())
+                    }
+                }));
+            analysis.gaps.extend(function_analysis.gaps);
         },
     );
-    found.then_some(errors)
+    found.then_some(analysis)
 }
 
 fn generator_context_manager_functions(
@@ -233,6 +240,13 @@ fn collect_effects(
     depth: usize,
 ) {
     if depth > 8 {
+        effects.gaps.push(AnalysisGap::new(
+            AnalysisGapKind::AnalysisCutoff,
+            AnalysisGapImpact::Both,
+            call_file,
+            call_expression.range(),
+            None,
+        ));
         return;
     }
     let definitions = definitions_for_expression(db, resolution_file, resolution_expression);
@@ -282,6 +296,7 @@ fn collect_effects(
         let Some(class) = collector.find_class(&full_range) else {
             continue;
         };
+        effects.recognized = true;
 
         let mut found_enter = false;
         let mut found_exit = false;
@@ -291,7 +306,7 @@ fn collect_effects(
             };
             if needs_enter && method.name.as_str() == enter_name {
                 found_enter = true;
-                effects.enter_errors.extend(method_errors(
+                let analysis = method_analysis(
                     db,
                     call_file,
                     definition_file,
@@ -300,12 +315,14 @@ fn collect_effects(
                     target_exceptions,
                     call_stack.clone(),
                     exception_capture_stack,
-                ));
+                );
+                effects.enter_errors.extend(analysis.errors);
+                effects.gaps.extend(analysis.gaps);
             } else if needs_exit && method.name.as_str() == exit_name {
                 found_exit = true;
                 *exit_methods += 1;
                 *all_exit_methods_suppress &= always_returns_true(method);
-                effects.exit_errors.extend(method_errors(
+                let analysis = method_analysis(
                     db,
                     call_file,
                     definition_file,
@@ -314,7 +331,9 @@ fn collect_effects(
                     target_exceptions,
                     call_stack.clone(),
                     exception_capture_stack,
-                ));
+                );
+                effects.exit_errors.extend(analysis.errors);
+                effects.gaps.extend(analysis.gaps);
             }
         }
 
@@ -344,7 +363,7 @@ fn collect_effects(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn method_errors(
+fn method_analysis(
     db: &dyn Db,
     call_file: File,
     definition_file: File,
@@ -353,26 +372,50 @@ fn method_errors(
     target_exceptions: &Vec<Exception>,
     call_stack: CallStack,
     exception_capture_stack: &ExceptionCaptureStack,
-) -> Vec<FunctionRaise> {
+) -> FunctionAnalysis {
     let path = match definition_file.path(db) {
         FilePath::System(path) => path,
-        FilePath::SystemVirtual(_) | FilePath::Vendored(_) => return Vec::new(),
+        FilePath::SystemVirtual(_) => {
+            return FunctionAnalysis {
+                errors: vec![],
+                gaps: vec![AnalysisGap::new(
+                    AnalysisGapKind::OpaqueCall,
+                    AnalysisGapImpact::MayMissErrors,
+                    call_file,
+                    expression.range(),
+                    Some(method.name.to_string()),
+                )],
+            };
+        }
+        FilePath::Vendored(_) => return FunctionAnalysis::default(),
     };
     let key = (path.as_str().into(), method.name.as_str().into());
     if call_stack.contains(&key) {
-        return Vec::new();
+        return FunctionAnalysis {
+            errors: vec![],
+            gaps: vec![AnalysisGap::new(
+                AnalysisGapKind::AnalysisCutoff,
+                AnalysisGapImpact::MayMissErrors,
+                call_file,
+                expression.range(),
+                Some(method.name.to_string()),
+            )],
+        };
     }
-    get_transitive_errors(
+    let mut analysis = get_transitive_analysis(
         db,
         definition_file,
         method,
         target_exceptions,
         call_stack.push(key),
         exception_capture_stack,
-    )
-    .iter()
-    .map(|error| error.transitive(call_file, expression.range()))
-    .collect()
+    );
+    analysis.errors = analysis
+        .errors
+        .iter()
+        .map(|error| error.transitive(call_file, expression.range()))
+        .collect();
+    analysis
 }
 
 fn definitions_for_expression<'a>(
@@ -406,7 +449,12 @@ fn contextlib_suppressed_exceptions(
     )
 }
 
-fn is_contextlib_member(db: &dyn Db, file: File, expression: &Expr, member: &str) -> bool {
+pub(crate) fn is_contextlib_member(
+    db: &dyn Db,
+    file: File,
+    expression: &Expr,
+    member: &str,
+) -> bool {
     definitions_for_expression(db, file, expression)
         .into_iter()
         .any(|definition| {

@@ -2,7 +2,9 @@ use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
-use py_checked_exceptions::{analyze_project, resolve_absolute_module_path};
+use py_checked_exceptions::{
+    AnalysisEvent, AnalysisGap, analyze_project_with_gaps, resolve_absolute_module_path,
+};
 use rayon::ThreadPoolBuilder;
 use ruff_db::{
     diagnostic::{Diagnostic, DisplayDiagnosticConfig},
@@ -16,7 +18,7 @@ use ty_project::{
 };
 
 use crate::{
-    args::{CheckCommand, Cli, Command, TerminalColor},
+    args::{AnalysisGapOutput, CheckCommand, Cli, Command, TerminalColor},
     logging::setup_tracing,
     printer::Printer,
 };
@@ -90,9 +92,26 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
         .map(|path| resolve_absolute_module_path(&db, &path))
         .collect();
 
-    let mut diagnostics: Vec<Diagnostic> =
-        analyze_project(db.clone(), target_exceptions, Some(&PB))?.collect();
+    let events = analyze_project_with_gaps(db.clone(), target_exceptions, Some(&PB))?;
+    let mut diagnostics = Vec::new();
+    let mut gaps = Vec::new();
+    for event in events {
+        match event {
+            AnalysisEvent::Diagnostic(diagnostic) => diagnostics.push(diagnostic),
+            AnalysisEvent::Gap(gap) => gaps.push(gap),
+        }
+    }
     PB.finish_and_clear();
+
+    let mut seen_gaps = std::collections::HashSet::new();
+    gaps.retain(|gap| seen_gaps.insert(gap.clone()));
+    gaps.sort_unstable_by_key(|gap| {
+        (
+            gap.file().path(&db).as_str().to_string(),
+            gap.range().start(),
+            gap.kind().code(),
+        )
+    });
 
     diagnostics.sort_unstable_by_key(|diagnostic| {
         (
@@ -110,7 +129,26 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
         .format(terminal_settings.output_format.into())
         .color(colored::control::SHOULD_COLORIZE.should_colorize());
 
-    if diagnostics.is_empty() {
+    let diagnostics_count = diagnostics.len();
+    let mut stdout = printer.stream_for_details().lock();
+    for diagnostic in diagnostics {
+        if stdout.is_enabled() {
+            write!(stdout, "{}", diagnostic.display(&db, &display_config))?;
+        }
+    }
+    if matches!(check.analysis_gaps, Some(AnalysisGapOutput::Full)) && stdout.is_enabled() {
+        for gap in &gaps {
+            let diagnostic = Diagnostic::from(gap);
+            write!(stdout, "{}", diagnostic.display(&db, &display_config))?;
+        }
+    }
+    drop(stdout);
+
+    if check.analysis_gaps.is_some() {
+        print_analysis_gap_summary(printer, &gaps)?;
+    }
+
+    if diagnostics_count == 0 {
         writeln!(
             printer.stream_for_success_summary(),
             "{}",
@@ -119,17 +157,6 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
 
         Ok(ExitCode::SUCCESS)
     } else {
-        let diagnostics_count = diagnostics.len();
-
-        let mut stdout = printer.stream_for_details().lock();
-        for diagnostic in diagnostics {
-            // Only render diagnostics if they're going to be displayed, since doing
-            // so is expensive.
-            if stdout.is_enabled() {
-                write!(stdout, "{}", diagnostic.display(&db, &display_config))?;
-            }
-        }
-
         writeln!(
             printer.stream_for_failure_summary(),
             "Found {} diagnostic{}",
@@ -143,6 +170,31 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
             ExitCode::SUCCESS
         })
     }
+}
+
+fn print_analysis_gap_summary(printer: Printer, gaps: &[AnalysisGap]) -> Result<()> {
+    if gaps.is_empty() {
+        writeln!(
+            printer.stream_for_requested_summary(),
+            "No analysis gaps found."
+        )?;
+        return Ok(());
+    }
+    let mut counts = std::collections::BTreeMap::new();
+    for gap in gaps {
+        *counts.entry(gap.kind().description()).or_insert(0usize) += 1;
+    }
+    let mut stdout = printer.stream_for_requested_summary();
+    writeln!(
+        stdout,
+        "Analysis incomplete at {} site{}:",
+        gaps.len(),
+        if gaps.len() == 1 { "" } else { "s" }
+    )?;
+    for (description, count) in counts {
+        writeln!(stdout, "  {count} {description}")?;
+    }
+    Ok(())
 }
 
 fn set_colored_override(color: Option<TerminalColor>) {

@@ -1,3 +1,4 @@
+pub(crate) mod analysis;
 pub(crate) mod call_stack;
 pub(crate) mod capture_stack;
 pub(crate) mod context_manager;

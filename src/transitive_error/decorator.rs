@@ -12,9 +12,14 @@ use ty_python_semantic::{ResolvedDefinition, definitions_for_attribute, definiti
 use crate::{
     module::ModuleCollector,
     transitive_error::{
-        call_stack::CallStack, capture_stack::ExceptionCaptureStack,
-        context_manager::apply_generator_context_manager, exception::Exception,
-        extract::resolve_alias, raise::FunctionRaise, visitor::FunctionTransitiveErrorVisitor,
+        analysis::{AnalysisGap, AnalysisGapImpact, AnalysisGapKind, FunctionAnalysis},
+        call_stack::CallStack,
+        capture_stack::ExceptionCaptureStack,
+        context_manager::{apply_generator_context_manager, is_contextlib_member},
+        exception::Exception,
+        extract::resolve_alias,
+        raise::FunctionRaise,
+        visitor::FunctionTransitiveErrorVisitor,
     },
 };
 
@@ -26,10 +31,15 @@ pub(crate) fn apply_decorators(
     target_exceptions: &Vec<Exception>,
     call_stack: CallStack,
     exception_capture_stack: &ExceptionCaptureStack,
-    mut errors: Vec<FunctionRaise>,
-) -> Vec<FunctionRaise> {
+    mut analysis: FunctionAnalysis,
+) -> FunctionAnalysis {
     for decorator in function.decorator_list.iter().rev() {
-        if let Some(context_manager_errors) = apply_generator_context_manager(
+        if is_contextlib_member(db, file, &decorator.expression, "contextmanager")
+            || is_contextlib_member(db, file, &decorator.expression, "asynccontextmanager")
+        {
+            continue;
+        }
+        if let Some(context_manager_analysis) = apply_generator_context_manager(
             db,
             file,
             &decorator.expression,
@@ -37,9 +47,10 @@ pub(crate) fn apply_decorators(
             target_exceptions,
             call_stack.clone(),
             exception_capture_stack,
-            errors.clone(),
+            analysis.errors.clone(),
         ) {
-            errors = context_manager_errors;
+            analysis.errors = context_manager_analysis.errors;
+            analysis.gaps.extend(context_manager_analysis.gaps);
             continue;
         }
 
@@ -49,6 +60,7 @@ pub(crate) fn apply_decorators(
         };
         let definitions = definitions_for_expression(db, file, expression);
         let mut transformed = Vec::new();
+        let mut transformed_gaps = Vec::new();
         let mut recognized = false;
 
         for definition in definitions {
@@ -77,8 +89,9 @@ pub(crate) fn apply_decorators(
                             target_exceptions,
                             call_stack.clone(),
                             exception_capture_stack,
-                            &errors,
+                            &analysis.errors,
                             &mut transformed,
+                            &mut transformed_gaps,
                         );
                     }
                 } else {
@@ -89,18 +102,29 @@ pub(crate) fn apply_decorators(
                         target_exceptions,
                         call_stack.clone(),
                         exception_capture_stack,
-                        &errors,
+                        &analysis.errors,
                         &mut transformed,
+                        &mut transformed_gaps,
                     );
                 }
             }
         }
 
         if recognized {
-            errors = transformed;
+            analysis.errors = transformed;
+            analysis.gaps.extend(transformed_gaps);
+        } else {
+            analysis.gaps.push(AnalysisGap::new(
+                AnalysisGapKind::UnmodeledDecorator,
+                AnalysisGapImpact::Both,
+                file,
+                decorator.expression.range(),
+                expression_name(expression),
+            ));
         }
     }
-    errors
+    analysis.errors = crate::transitive_error::visitor::normalize_errors(analysis.errors);
+    analysis
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -113,6 +137,7 @@ fn transform_with_decorator(
     exception_capture_stack: &ExceptionCaptureStack,
     errors: &[FunctionRaise],
     transformed: &mut Vec<FunctionRaise>,
+    transformed_gaps: &mut Vec<AnalysisGap>,
 ) -> bool {
     let Some(parameter) = first_parameter_name(decorator) else {
         return false;
@@ -123,7 +148,7 @@ fn transform_with_decorator(
     }
 
     for wrapper in wrappers {
-        let wrapper_errors = FunctionTransitiveErrorVisitor::new(
+        let wrapper_analysis = FunctionTransitiveErrorVisitor::new(
             db,
             file,
             wrapper,
@@ -132,10 +157,19 @@ fn transform_with_decorator(
             exception_capture_stack,
         )
         .with_callable_errors(vec![(parameter.to_string(), errors.to_vec())])
-        .transitive_errors();
-        transformed.extend(wrapper_errors);
+        .transitive_analysis();
+        transformed.extend(wrapper_analysis.errors);
+        transformed_gaps.extend(wrapper_analysis.gaps);
     }
     true
+}
+
+fn expression_name(expression: &Expr) -> Option<String> {
+    match expression {
+        Expr::Name(name) => Some(name.id.to_string()),
+        Expr::Attribute(attribute) => Some(attribute.attr.to_string()),
+        _ => None,
+    }
 }
 
 fn definitions_for_expression<'a>(

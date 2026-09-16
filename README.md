@@ -21,6 +21,10 @@ Found 1 diagnostic
 
 The CLI currently only provides a `check` command that can be run to perform static analysis for a project.
 
+Generic exception specializations are tracked independently. For example, an exception raised as
+`NotFoundError[User]` must be documented as `NotFoundError[User]`, while still matching a
+`NotFoundError` target-exception filter or handler.
+
 ```
 Check a project for errors documenting errors
 
@@ -77,6 +81,13 @@ Options:
           - full:    Print diagnostics verbosely, with context and helpful hints \[default\]
           - concise: Print diagnostics concisely, one per line
 
+      --show-analysis-gaps[=<LEVEL>]
+          Report places where exception analysis is incomplete
+
+          Possible values:
+          - summary: Print counts grouped by the reason analysis was incomplete
+          - full:    Print source diagnostics as well as the summary
+
       --color <WHEN>
           Control when colored output is used
 
@@ -100,6 +111,10 @@ File selection:
 ```
 
 ## Known Limitations
+
+Use `--show-analysis-gaps` to print a summary of code the analyzer could not fully model, or
+`--show-analysis-gaps=full` to include source diagnostics. Analysis gaps are informational and do
+not change the command's exit status.
 
 This tool currently doesn't support:
 - Higher-order calls through `*args`, `**kwargs`, or dynamically stored and returned callables

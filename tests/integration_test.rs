@@ -3,7 +3,10 @@ use ruff_source_file::LineIndex;
 use std::env::current_dir;
 
 use itertools::{EitherOrBoth, Itertools};
-use py_checked_exceptions::{analyze_project, resolve_absolute_module_path};
+use py_checked_exceptions::{
+    AnalysisEvent, AnalysisGapKind, analyze_project, analyze_project_with_gaps,
+    resolve_absolute_module_path,
+};
 use ruff_db::{
     diagnostic::Diagnostic,
     files::{File, FilePath},
@@ -311,10 +314,66 @@ fn test_stdlib_higher_order_functions() -> Result<()> {
     )
 }
 
+#[test]
+fn test_analysis_gaps() -> Result<()> {
+    let project_path = SystemPathBuf::from_path_buf(current_dir()?)
+        .unwrap()
+        .join("tests/fixtures");
+    let filter_path = project_path.join("analysis_gaps.py");
+    let system = OsSystem::new(&project_path);
+    let mut project_metadata =
+        ProjectMetadata::discover(SystemPath::new(project_path.as_str()), &system)?;
+    project_metadata.apply_configuration_files(&system)?;
+    let mut db = ProjectDatabase::new(project_metadata, system)?;
+    db.project().set_included_paths(&mut db, vec![filter_path]);
+
+    let gaps = analyze_project_with_gaps(db, vec![], None)?
+        .filter_map(|event| match event {
+            AnalysisEvent::Diagnostic(_) => None,
+            AnalysisEvent::Gap(gap) => Some(gap),
+        })
+        .collect::<Vec<_>>();
+    let kinds = gaps.iter().map(|gap| gap.kind()).collect::<Vec<_>>();
+
+    assert!(kinds.contains(&AnalysisGapKind::OpaqueCall));
+    assert!(kinds.contains(&AnalysisGapKind::DynamicCall));
+    assert!(kinds.contains(&AnalysisGapKind::UnmodeledDecorator));
+    assert!(kinds.contains(&AnalysisGapKind::UnmodeledContextManager));
+    assert!(kinds.contains(&AnalysisGapKind::UnsupportedCallback));
+    Ok(())
+}
+
+#[test]
+fn test_generic_exceptions() -> Result<()> {
+    assert_diagnostics(
+        "generic_exceptions.py",
+        Some("generic_exceptions.NotFoundError".into()),
+        vec![
+            (
+                "Raises undocumented error NotFoundError[User]",
+                (34, 5),
+                (34, 13),
+            ),
+            (
+                "Raises undocumented error NotFoundError[User]",
+                (43, 5),
+                (43, 32),
+            ),
+            (
+                "Documents extra error that is never raised NotFoundError",
+                (40, 8),
+                (41, 9),
+            ),
+        ],
+    )
+}
+
+type ExpectedDiagnostic<'a> = (&'a str, (usize, usize), (usize, usize));
+
 fn assert_diagnostics(
     test_file: &str,
     target_exception: Option<String>,
-    expected_diagnostics: Vec<(&str, (usize, usize), (usize, usize))>,
+    expected_diagnostics: Vec<ExpectedDiagnostic<'_>>,
 ) -> Result<()> {
     let project_path = SystemPathBuf::from_path_buf(current_dir()?)
         .unwrap()
@@ -322,7 +381,7 @@ fn assert_diagnostics(
     let filter_path = project_path.join(test_file);
     let system = OsSystem::new(&project_path);
     let mut project_metadata =
-        ProjectMetadata::discover(&SystemPath::new(project_path.as_str()), &system)?;
+        ProjectMetadata::discover(SystemPath::new(project_path.as_str()), &system)?;
     project_metadata.apply_configuration_files(&system)?;
     let mut db = ProjectDatabase::new(project_metadata, system.clone())?;
     db.project().set_included_paths(&mut db, vec![filter_path]);

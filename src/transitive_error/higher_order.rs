@@ -9,11 +9,22 @@ use ty_python_semantic::{
 };
 
 use crate::transitive_error::{
-    call_stack::CallStack, capture_stack::ExceptionCaptureStack, exception::Exception,
-    extract::extract_errors, raise::FunctionRaise, visitor::normalize_errors,
+    analysis::{AnalysisGap, AnalysisGapImpact, AnalysisGapKind, FunctionAnalysis},
+    call_stack::CallStack,
+    capture_stack::ExceptionCaptureStack,
+    exception::Exception,
+    extract::extract_analysis,
+    raise::FunctionRaise,
+    visitor::normalize_errors,
 };
 
 pub(crate) type CallableErrors = Vec<(String, Vec<FunctionRaise>)>;
+
+#[derive(Default)]
+pub(crate) struct CallableAnalysis {
+    pub(crate) errors: CallableErrors,
+    pub(crate) gaps: Vec<AnalysisGap>,
+}
 
 pub(crate) fn eager_stdlib_callback_errors(
     db: &dyn Db,
@@ -45,7 +56,7 @@ pub(crate) fn eager_stdlib_callback_errors(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn callable_errors_for_call(
+pub(crate) fn callable_analysis_for_call(
     db: &dyn Db,
     file: File,
     call: &ExprCall,
@@ -53,27 +64,30 @@ pub(crate) fn callable_errors_for_call(
     call_stack: CallStack,
     exception_capture_stack: &ExceptionCaptureStack,
     inherited_callable_errors: &CallableErrors,
-) -> CallableErrors {
+) -> CallableAnalysis {
     if call.arguments.is_empty() {
-        return vec![];
+        return CallableAnalysis::default();
     }
     let arguments = call.arguments.arguments_source_order().collect_vec();
-    if !arguments
-        .iter()
-        .any(|argument| matches!(argument.value(), Expr::Name(_) | Expr::Attribute(_)))
-    {
-        return vec![];
+    if !arguments.iter().any(|argument| {
+        matches!(
+            argument.value(),
+            Expr::Name(_) | Expr::Attribute(_) | Expr::Lambda(_)
+        )
+    }) {
+        return CallableAnalysis::default();
     }
 
     let model = SemanticModel::new(db, file);
     let signature_details = call_signature_details(db, &model, call);
     let Some(active_signature) = find_active_signature_from_details(&signature_details) else {
-        return vec![];
+        return CallableAnalysis::default();
     };
     let Some(details) = signature_details.get(active_signature) else {
-        return vec![];
+        return CallableAnalysis::default();
     };
     let mut callable_errors: CallableErrors = vec![];
+    let mut gaps = vec![];
 
     for (argument_index, mapping) in details.argument_to_parameter_mapping.iter().enumerate() {
         if !mapping.matched {
@@ -85,7 +99,7 @@ pub(crate) fn callable_errors_for_call(
         else {
             continue;
         };
-        let errors = callable_expression_errors(
+        let analysis = callable_expression_analysis(
             db,
             file,
             argument,
@@ -94,7 +108,8 @@ pub(crate) fn callable_errors_for_call(
             exception_capture_stack,
             inherited_callable_errors,
         );
-        if errors.is_empty() {
+        gaps.extend(analysis.gaps);
+        if analysis.errors.is_empty() {
             continue;
         }
         for parameter_index in &mapping.parameters {
@@ -108,18 +123,21 @@ pub(crate) fn callable_errors_for_call(
                 .iter_mut()
                 .find(|(name, _)| name == parameter_name)
             {
-                existing_errors.extend(errors.clone());
+                existing_errors.extend(analysis.errors.clone());
                 *existing_errors = normalize_errors(existing_errors.clone());
             } else {
-                callable_errors.push((parameter_name.clone(), errors.clone()));
+                callable_errors.push((parameter_name.clone(), analysis.errors.clone()));
             }
         }
     }
-    callable_errors
+    CallableAnalysis {
+        errors: callable_errors,
+        gaps,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn callable_expression_errors(
+fn callable_expression_analysis(
     db: &dyn Db,
     file: File,
     expression: &Expr,
@@ -127,43 +145,57 @@ fn callable_expression_errors(
     call_stack: CallStack,
     exception_capture_stack: &ExceptionCaptureStack,
     inherited_callable_errors: &CallableErrors,
-) -> Vec<FunctionRaise> {
+) -> FunctionAnalysis {
     if let Some(name) = expression.as_name_expr()
         && let Some((_, errors)) = inherited_callable_errors
             .iter()
             .find(|(callable, _)| callable == name.id.as_str())
     {
-        return errors.clone();
+        return FunctionAnalysis {
+            errors: errors.clone(),
+            gaps: vec![],
+        };
     }
 
     let definitions = match expression {
         Expr::Name(name) => definitions_for_name(db, file, name),
         Expr::Attribute(attribute) => definitions_for_attribute(db, file, attribute),
-        _ => return vec![],
+        Expr::Lambda(_) => {
+            return FunctionAnalysis {
+                errors: vec![],
+                gaps: vec![AnalysisGap::new(
+                    AnalysisGapKind::UnsupportedCallback,
+                    AnalysisGapImpact::MayMissErrors,
+                    file,
+                    expression.range(),
+                    None,
+                )],
+            };
+        }
+        _ => return FunctionAnalysis::default(),
     };
-    let mut errors = vec![];
+    let mut analysis = FunctionAnalysis::default();
     for definition in definitions {
         let ResolvedDefinition::Definition(definition) = definition else {
             continue;
         };
         let definition_file = definition.file(db);
-        errors.extend(
-            extract_errors(
-                db,
-                file,
-                expression.range(),
-                definition_file,
-                definition,
-                target_exceptions.to_vec(),
-                call_stack.clone(),
-                exception_capture_stack.clone(),
-                vec![],
-            )
-            .iter()
-            .cloned(),
+        let callback_analysis = extract_analysis(
+            db,
+            file,
+            expression.range(),
+            definition_file,
+            definition,
+            target_exceptions.to_vec(),
+            call_stack.clone(),
+            exception_capture_stack.clone(),
+            vec![],
         );
+        analysis.errors.extend(callback_analysis.errors);
+        analysis.gaps.extend(callback_analysis.gaps);
     }
-    normalize_errors(errors)
+    analysis.errors = normalize_errors(analysis.errors);
+    analysis
 }
 
 fn eager_stdlib_callback_parameter(
