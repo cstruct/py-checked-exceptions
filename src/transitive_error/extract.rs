@@ -11,6 +11,7 @@ use ty_python_semantic::{
 };
 
 use crate::{
+    AnalysisOptions,
     module::ModuleCollector,
     transitive_error::{
         analysis::{AnalysisGap, AnalysisGapImpact, AnalysisGapKind, FunctionAnalysis},
@@ -34,6 +35,7 @@ fn extract_errors_cycle_fn<'db>(
     _target_exceptions: Vec<Exception>,
     _call_stack: CallStack,
     _exception_capture_stack: ExceptionCaptureStack,
+    _analysis_options: AnalysisOptions,
     _callable_errors: CallableErrors,
 ) -> salsa::CycleRecoveryAction<FunctionAnalysis> {
     salsa::CycleRecoveryAction::Iterate
@@ -49,6 +51,7 @@ fn extract_errors_initial<'db>(
     _target_exceptions: Vec<Exception>,
     _call_stack: CallStack,
     _exception_capture_stack: ExceptionCaptureStack,
+    _analysis_options: AnalysisOptions,
     _callable_errors: CallableErrors,
 ) -> FunctionAnalysis {
     FunctionAnalysis::default()
@@ -65,6 +68,7 @@ pub(crate) fn extract_analysis<'db>(
     target_exceptions: Vec<Exception>,
     call_stack: CallStack,
     exception_capture_stack: ExceptionCaptureStack,
+    analysis_options: AnalysisOptions,
     callable_errors: CallableErrors,
 ) -> FunctionAnalysis {
     let module = parsed_module(db, definition_file).load(db);
@@ -118,6 +122,7 @@ pub(crate) fn extract_analysis<'db>(
             &target_exceptions,
             new_stack,
             &exception_capture_stack,
+            &analysis_options,
             callable_errors.clone(),
         );
         let transitive_errors = transitive

@@ -7,6 +7,7 @@ use ty_python_semantic::semantic_index::definition::DefinitionKind;
 use ty_python_semantic::{ResolvedDefinition, definitions_for_attribute, definitions_for_name};
 
 use crate::{
+    AnalysisOptions,
     module::ModuleCollector,
     transitive_error::{
         analysis::{AnalysisGap, AnalysisGapImpact, AnalysisGapKind, FunctionAnalysis},
@@ -53,6 +54,7 @@ pub(crate) fn apply_dependency_injection(
     file: File,
     function: &StmtFunctionDef,
     target_exceptions: &Vec<Exception>,
+    analysis_options: &AnalysisOptions,
     mut analysis: FunctionAnalysis,
 ) -> FunctionAnalysis {
     let route_decorator_ranges = function
@@ -90,8 +92,14 @@ pub(crate) fn apply_dependency_injection(
             ));
             continue;
         };
-        let dependency_analysis =
-            dependency_expression_analysis(db, file, callable, target_exceptions, CallStack::new());
+        let dependency_analysis = dependency_expression_analysis(
+            db,
+            file,
+            callable,
+            target_exceptions,
+            analysis_options,
+            CallStack::new(),
+        );
         analysis.errors.extend(dependency_analysis.errors);
         analysis.gaps.extend(dependency_analysis.gaps);
     }
@@ -100,6 +108,7 @@ pub(crate) fn apply_dependency_injection(
         file,
         function,
         target_exceptions,
+        analysis_options,
         CallStack::new(),
     );
     analysis.errors.extend(alias_analysis.errors);
@@ -276,6 +285,7 @@ fn dependency_expression_analysis(
     call_file: File,
     expression: &Expr,
     target_exceptions: &Vec<Exception>,
+    analysis_options: &AnalysisOptions,
     call_stack: CallStack,
 ) -> FunctionAnalysis {
     dependency_expression_analysis_at(
@@ -285,6 +295,7 @@ fn dependency_expression_analysis(
         call_file,
         expression.range(),
         target_exceptions,
+        analysis_options,
         call_stack,
     )
 }
@@ -297,6 +308,7 @@ fn dependency_expression_analysis_at(
     call_file: File,
     call_range: TextRange,
     target_exceptions: &Vec<Exception>,
+    analysis_options: &AnalysisOptions,
     call_stack: CallStack,
 ) -> FunctionAnalysis {
     if let Expr::Call(call) = expression {
@@ -307,6 +319,7 @@ fn dependency_expression_analysis_at(
             call_file,
             call_range,
             target_exceptions,
+            analysis_options,
             call_stack,
         );
     }
@@ -333,6 +346,7 @@ fn dependency_expression_analysis_at(
             target_exceptions.clone(),
             call_stack.clone(),
             ExceptionCaptureStack::new(),
+            analysis_options.clone(),
             vec![],
         );
         analysis.errors.extend(core_analysis.errors);
@@ -344,6 +358,7 @@ fn dependency_expression_analysis_at(
             definition_file,
             definition,
             target_exceptions,
+            analysis_options,
             call_stack.clone(),
         );
         analysis.errors.extend(injected_analysis.errors);
@@ -366,6 +381,7 @@ fn dependency_factory_or_object_analysis(
     call_file: File,
     call_range: TextRange,
     target_exceptions: &Vec<Exception>,
+    analysis_options: &AnalysisOptions,
     call_stack: CallStack,
 ) -> FunctionAnalysis {
     let definitions = definitions_for_expression(db, resolution_file, &call.func);
@@ -419,6 +435,7 @@ fn dependency_factory_or_object_analysis(
                     target_exceptions,
                     method_stack.clone(),
                     &ExceptionCaptureStack::new(),
+                    analysis_options,
                 );
                 analysis.errors.extend(
                     method_analysis
@@ -432,6 +449,7 @@ fn dependency_factory_or_object_analysis(
                     definition_file,
                     method,
                     target_exceptions,
+                    analysis_options,
                     method_stack,
                 );
                 analysis.errors.extend(
@@ -470,6 +488,7 @@ fn dependency_factory_or_object_analysis(
                     call_file,
                     call_range,
                     target_exceptions,
+                    analysis_options,
                     call_stack.clone(),
                 );
                 analysis.errors.extend(returned_analysis.errors);
@@ -492,6 +511,7 @@ fn aliased_parameter_dependency_analysis(
     file: File,
     function: &StmtFunctionDef,
     target_exceptions: &Vec<Exception>,
+    analysis_options: &AnalysisOptions,
     call_stack: CallStack,
 ) -> FunctionAnalysis {
     let mut analysis = FunctionAnalysis::default();
@@ -509,6 +529,7 @@ fn aliased_parameter_dependency_analysis(
             file,
             annotation.range(),
             target_exceptions,
+            analysis_options,
             call_stack.clone(),
             0,
         );
@@ -527,6 +548,7 @@ fn aliased_annotation_dependency_analysis(
     call_file: File,
     call_range: TextRange,
     target_exceptions: &Vec<Exception>,
+    analysis_options: &AnalysisOptions,
     call_stack: CallStack,
     depth: usize,
 ) -> FunctionAnalysis {
@@ -574,6 +596,7 @@ fn aliased_annotation_dependency_analysis(
                 call_file,
                 call_range,
                 target_exceptions,
+                analysis_options,
                 call_stack.clone(),
             );
             analysis.errors.extend(nested.errors);
@@ -587,6 +610,7 @@ fn aliased_annotation_dependency_analysis(
                 call_file,
                 call_range,
                 target_exceptions,
+                analysis_options,
                 call_stack.clone(),
                 depth + 1,
             );
@@ -625,6 +649,7 @@ fn nested_dependency_analysis<'db>(
     definition_file: File,
     definition: ty_python_semantic::semantic_index::definition::Definition<'db>,
     target_exceptions: &Vec<Exception>,
+    analysis_options: &AnalysisOptions,
     call_stack: CallStack,
 ) -> FunctionAnalysis {
     let module = parsed_module(db, definition_file).load(db);
@@ -659,6 +684,7 @@ fn nested_dependency_analysis<'db>(
             definition_file,
             function,
             target_exceptions,
+            analysis_options,
             call_stack.push(key),
         );
         analysis.errors.extend(
@@ -678,6 +704,7 @@ fn injected_dependencies_for_function(
     file: File,
     function: &StmtFunctionDef,
     target_exceptions: &Vec<Exception>,
+    analysis_options: &AnalysisOptions,
     call_stack: CallStack,
 ) -> FunctionAnalysis {
     let mut dependencies = Vec::new();
@@ -699,13 +726,20 @@ fn injected_dependencies_for_function(
             file,
             callable,
             target_exceptions,
+            analysis_options,
             call_stack.clone(),
         );
         analysis.errors.extend(nested.errors);
         analysis.gaps.extend(nested.gaps);
     }
-    let aliases =
-        aliased_parameter_dependency_analysis(db, file, function, target_exceptions, call_stack);
+    let aliases = aliased_parameter_dependency_analysis(
+        db,
+        file,
+        function,
+        target_exceptions,
+        analysis_options,
+        call_stack,
+    );
     analysis.errors.extend(aliases.errors);
     analysis.gaps.extend(aliases.gaps);
     analysis.errors = normalize_errors(analysis.errors);

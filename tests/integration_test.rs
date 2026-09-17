@@ -4,8 +4,9 @@ use std::env::current_dir;
 
 use itertools::{EitherOrBoth, Itertools};
 use py_checked_exceptions::{
-    AnalysisEvent, AnalysisExtension, AnalysisGapKind, AnalysisOptions, analyze_project,
-    analyze_project_with_gaps, analyze_project_with_options, resolve_absolute_module_path,
+    AnalysisEvent, AnalysisExtension, AnalysisGapKind, AnalysisOptions, ContextManagerEffect,
+    ContextManagerEffectRule, analyze_project, analyze_project_with_gaps,
+    analyze_project_with_options, resolve_absolute_module_path,
 };
 use ruff_db::{
     diagnostic::Diagnostic,
@@ -280,6 +281,36 @@ fn test_context_managers() -> Result<()> {
             ("Raises undocumented error EnterError", (187, 10), (187, 32)),
             ("Raises undocumented error ExitError", (222, 16), (222, 33)),
             ("Raises undocumented error ExitError", (253, 9), (253, 26)),
+        ],
+    )
+}
+
+#[test]
+fn test_configured_context_manager_effects() -> Result<()> {
+    let options = AnalysisOptions::default().with_context_manager_effects([
+        ContextManagerEffectRule {
+            function: "configured_context_manager_effects.optional_errors".into(),
+            exception_parameter: "error_type".into(),
+            effect: ContextManagerEffect::Optional,
+        },
+        ContextManagerEffectRule {
+            function: "configured_context_manager_effects.suppress_errors".into(),
+            exception_parameter: "error_type".into(),
+            effect: ContextManagerEffect::Suppress,
+        },
+    ]);
+    assert_diagnostics_with_options(
+        "configured_context_manager_effects.py",
+        None,
+        options,
+        vec![
+            ("Raises undocumented error OtherError", (45, 9), (45, 27)),
+            (
+                "Raises undocumented error ConfiguredError",
+                (52, 5),
+                (52, 28),
+            ),
+            ("Raises undocumented error OtherError", (62, 9), (62, 27)),
         ],
     )
 }

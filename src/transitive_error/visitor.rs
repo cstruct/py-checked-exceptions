@@ -6,13 +6,15 @@ use ruff_text_size::Ranged;
 use ty_project::Db;
 use ty_python_semantic::{ResolvedDefinition, definitions_for_attribute, definitions_for_name};
 
+use crate::AnalysisOptions;
 use crate::transitive_error::analysis::{
     AnalysisGap, AnalysisGapImpact, AnalysisGapKind, FunctionAnalysis,
 };
 use crate::transitive_error::call_stack::CallStack;
 use crate::transitive_error::capture_stack::ExceptionCaptureStack;
 use crate::transitive_error::context_manager::{
-    apply_generator_context_manager, context_manager_effects, is_generator_context_manager,
+    apply_configured_context_manager_effects, apply_generator_context_manager,
+    context_manager_effects, is_generator_context_manager,
 };
 use crate::transitive_error::decorator::apply_decorators;
 use crate::transitive_error::exception::Exception;
@@ -31,6 +33,7 @@ pub(crate) fn get_transitive_analysis<'a>(
     target_exceptions: &Vec<Exception>,
     call_stack: CallStack,
     exception_capture_stack: &'a ExceptionCaptureStack,
+    analysis_options: &'a AnalysisOptions,
 ) -> FunctionAnalysis {
     get_transitive_analysis_with_callable_errors(
         db,
@@ -39,6 +42,7 @@ pub(crate) fn get_transitive_analysis<'a>(
         target_exceptions,
         call_stack,
         exception_capture_stack,
+        analysis_options,
         vec![],
     )
 }
@@ -51,6 +55,7 @@ pub(crate) fn get_transitive_analysis_with_callable_errors<'a>(
     target_exceptions: &Vec<Exception>,
     call_stack: CallStack,
     exception_capture_stack: &'a ExceptionCaptureStack,
+    analysis_options: &'a AnalysisOptions,
     callable_errors: CallableErrors,
 ) -> FunctionAnalysis {
     let analysis = FunctionTransitiveErrorVisitor::new(
@@ -60,6 +65,7 @@ pub(crate) fn get_transitive_analysis_with_callable_errors<'a>(
         target_exceptions,
         call_stack.clone(),
         exception_capture_stack,
+        analysis_options,
     )
     .with_callable_errors(callable_errors)
     .transitive_analysis();
@@ -70,6 +76,7 @@ pub(crate) fn get_transitive_analysis_with_callable_errors<'a>(
         target_exceptions,
         call_stack,
         exception_capture_stack,
+        analysis_options,
         analysis,
     )
 }
@@ -83,6 +90,7 @@ pub(crate) struct FunctionTransitiveErrorVisitor<'a> {
     gaps: Vec<AnalysisGap>,
     call_stack: CallStack,
     exception_capture_stack: ExceptionCaptureStack,
+    analysis_options: &'a AnalysisOptions,
     try_block_exceptions: Vec<Vec<Exception>>,
     callable_errors: CallableErrors,
     yield_errors: Vec<FunctionRaise>,
@@ -96,6 +104,7 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
         target_exceptions: &'a Vec<Exception>,
         call_stack: CallStack,
         exception_capture_stack: &'a ExceptionCaptureStack,
+        analysis_options: &'a AnalysisOptions,
     ) -> Self {
         Self {
             db,
@@ -106,6 +115,7 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
             gaps: vec![],
             call_stack,
             exception_capture_stack: exception_capture_stack.clone(),
+            analysis_options,
             try_block_exceptions: vec![],
             callable_errors: vec![],
             yield_errors: vec![],
@@ -156,9 +166,18 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
             self.target_exceptions,
             self.call_stack.clone(),
             &self.exception_capture_stack,
+            self.analysis_options,
         );
         self.gaps.extend(effects.gaps.clone());
-        if !is_generator && !effects.recognized {
+        let configured_effects = apply_configured_context_manager_effects(
+            self.db,
+            self.file,
+            &item.context_expr,
+            self.analysis_options,
+            Vec::new(),
+        );
+        self.gaps.extend(configured_effects.gaps);
+        if !is_generator && !effects.recognized && !configured_effects.recognized {
             self.gaps.push(AnalysisGap::new(
                 AnalysisGapKind::UnmodeledContextManager,
                 AnalysisGapImpact::Both,
@@ -173,8 +192,16 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
         // therefore suppress failures from an inner enter, body, or exit, but never its own enter.
         let protected_errors_start = self.errors.len();
         self.visit_with_items(remaining_items, body, is_async);
+        let protected_errors = self.errors.split_off(protected_errors_start);
+        let configured_effects = apply_configured_context_manager_effects(
+            self.db,
+            self.file,
+            &item.context_expr,
+            self.analysis_options,
+            protected_errors,
+        );
+        self.gaps.extend(configured_effects.gaps);
         if is_generator {
-            let protected_errors = self.errors.split_off(protected_errors_start);
             if let Some(generator_analysis) = apply_generator_context_manager(
                 self.db,
                 self.file,
@@ -183,25 +210,26 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
                 self.target_exceptions,
                 self.call_stack.clone(),
                 &self.exception_capture_stack,
-                protected_errors,
+                self.analysis_options,
+                configured_effects.errors,
             ) {
                 self.errors.extend(generator_analysis.errors);
                 self.gaps.extend(generator_analysis.gaps);
             }
             return;
         }
+        let mut protected_errors = configured_effects.errors;
         if effects.suppresses_exceptions {
-            self.errors.truncate(protected_errors_start);
+            protected_errors.clear();
         } else if !effects.suppressed_exceptions.is_empty() {
-            let mut protected_errors = self.errors.split_off(protected_errors_start);
             protected_errors.retain(|error| {
                 !effects
                     .suppressed_exceptions
                     .iter()
                     .any(|suppressed| error.name().is_subclass_of(suppressed))
             });
-            self.errors.extend(protected_errors);
         }
+        self.errors.extend(protected_errors);
         self.errors.extend(effects.exit_errors);
     }
 
@@ -408,6 +436,7 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                     self.call_stack.clone(),
                     &self.exception_capture_stack,
                     &self.callable_errors,
+                    self.analysis_options,
                 );
                 self.gaps.extend(callable_analysis.gaps);
                 self.errors.extend(
@@ -461,6 +490,7 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                             self.target_exceptions.clone(),
                             self.call_stack.clone(),
                             self.exception_capture_stack.clone(),
+                            self.analysis_options.clone(),
                             callable_analysis.errors.clone(),
                         )
                         .clone();

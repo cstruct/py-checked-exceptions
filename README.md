@@ -41,11 +41,22 @@ color = "auto"
 show-analysis-gaps = "summary"
 respect-ignore-files = true
 exclude = ["generated", "tests/fixtures/**"]
+
+[[tool.py-checked-exceptions.context-manager-effects]]
+function = "onetwo.base.error.suppress_api_error"
+exception-parameter = "error_type"
+effect = "optional"
 ```
 
 Paths in `pyproject.toml` are relative to the project root. Command-line options take precedence
 over this section, which in turn takes precedence over overlapping settings in `[tool.ty]`.
 Positional check paths, `--project`, and verbosity remain command-line-only.
+
+Context-manager effects model application-specific exception handling. `function` is the fully
+qualified context-manager function and `exception-parameter` identifies the argument containing
+the affected exception type. An effect of `suppress` prevents matching exceptions (including
+subclasses) from propagating out of the context manager. An effect of `optional` keeps propagating
+them, but does not require them to be documented.
 
 ```
 Check a project for errors documenting errors

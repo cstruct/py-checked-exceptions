@@ -8,6 +8,7 @@ pub(crate) struct FunctionRaiseDirectTarget {
     file: File,
     exception: Exception,
     range: TextRange,
+    documentation_optional: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, get_size2::GetSize)]
@@ -17,6 +18,7 @@ pub(crate) struct FunctionRaiseTransitiveTarget {
     exception: Exception,
     range: TextRange,
     depth: usize,
+    documentation_optional: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, get_size2::GetSize)]
@@ -31,12 +33,18 @@ impl FunctionRaise {
             file,
             exception,
             range,
+            documentation_optional: false,
         })
     }
-    pub(crate) fn sort_key(&self) -> (String, usize, usize) {
+    pub(crate) fn sort_key(&self) -> (String, bool, usize, usize) {
         match self {
-            FunctionRaise::Direct(e) => (e.exception.name.clone(), 0, 0),
-            FunctionRaise::Transitive(e) => (e.exception.name.clone(), 1, e.depth),
+            FunctionRaise::Direct(e) => (e.exception.name.clone(), e.documentation_optional, 0, 0),
+            FunctionRaise::Transitive(e) => (
+                e.exception.name.clone(),
+                e.documentation_optional,
+                1,
+                e.depth,
+            ),
         }
     }
     pub(crate) fn group_key(&self) -> String {
@@ -47,25 +55,47 @@ impl FunctionRaise {
     }
     pub(crate) fn transitive(&self, file: File, range: TextRange) -> Self {
         match self {
-            FunctionRaise::Direct(FunctionRaiseDirectTarget { exception, .. }) => {
-                FunctionRaise::Transitive(FunctionRaiseTransitiveTarget {
-                    target: Box::new(self.clone()),
-                    file,
-                    exception: (*exception).clone(),
-                    range,
-                    depth: 1,
-                })
-            }
+            FunctionRaise::Direct(FunctionRaiseDirectTarget {
+                exception,
+                documentation_optional,
+                ..
+            }) => FunctionRaise::Transitive(FunctionRaiseTransitiveTarget {
+                target: Box::new(self.clone()),
+                file,
+                exception: (*exception).clone(),
+                range,
+                depth: 1,
+                documentation_optional: *documentation_optional,
+            }),
             FunctionRaise::Transitive(FunctionRaiseTransitiveTarget {
-                exception, depth, ..
+                exception,
+                depth,
+                documentation_optional,
+                ..
             }) => FunctionRaise::Transitive(FunctionRaiseTransitiveTarget {
                 target: Box::new(self.clone()),
                 file,
                 exception: (*exception).clone(),
                 range,
                 depth: depth + 1,
+                documentation_optional: *documentation_optional,
             }),
         }
+    }
+
+    pub(crate) fn documentation_optional(&self) -> bool {
+        match self {
+            FunctionRaise::Direct(error) => error.documentation_optional,
+            FunctionRaise::Transitive(error) => error.documentation_optional,
+        }
+    }
+
+    pub(crate) fn with_optional_documentation(mut self) -> Self {
+        match &mut self {
+            FunctionRaise::Direct(error) => error.documentation_optional = true,
+            FunctionRaise::Transitive(error) => error.documentation_optional = true,
+        }
+        self
     }
     pub(crate) fn name(&self) -> &Exception {
         match self {

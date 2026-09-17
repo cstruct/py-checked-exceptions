@@ -25,7 +25,9 @@ mod extension;
 mod module;
 mod transitive_error;
 
-pub use extension::{AnalysisExtension, AnalysisOptions};
+pub use extension::{
+    AnalysisExtension, AnalysisOptions, ContextManagerEffect, ContextManagerEffectRule,
+};
 pub use transitive_error::analysis::{AnalysisGap, AnalysisGapImpact, AnalysisGapKind};
 pub use transitive_error::exception::Exception;
 pub use transitive_error::extract::extract_exception;
@@ -151,6 +153,7 @@ fn analyze_file_with_gaps(
             target_exceptions,
             CallStack::new(),
             &ExceptionCaptureStack::new(),
+            options,
         );
         let extension_documented_errors = if options.extension_enabled(AnalysisExtension::Fastapi) {
             analysis = extension::fastapi::apply_dependency_injection(
@@ -158,6 +161,7 @@ fn analyze_file_with_gaps(
                 file,
                 func_def,
                 target_exceptions,
+                options,
                 analysis,
             );
             extension::fastapi::documented_exceptions(db, file, func_def)

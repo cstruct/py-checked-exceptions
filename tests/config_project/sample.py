@@ -1,4 +1,4 @@
-from errors import ConfiguredError
+from errors import ConfiguredError, optional_errors
 
 
 class OtherError(RuntimeError):
@@ -27,3 +27,6 @@ def undocumented():
 
 def not_targeted():
     raise OtherError()
+def optional_by_config():
+    with optional_errors(ConfiguredError):
+        raise ConfiguredError()

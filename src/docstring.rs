@@ -28,7 +28,10 @@ pub fn compare_documented_exceptions(
     let errors = errors.iter().collect_vec();
 
     let (undocumented_errors, _) = difference_by_key(
-        errors.iter().copied(),
+        errors
+            .iter()
+            .copied()
+            .filter(|error| !error.documentation_optional()),
         documented_errors.into_iter(),
         |e| canonical_exception_name(&e.name().name),
         |(_, e)| canonical_exception_name(e),

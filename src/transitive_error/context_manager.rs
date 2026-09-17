@@ -6,14 +6,17 @@ use ruff_python_ast::{
     Expr, Stmt, StmtFunctionDef,
     statement_visitor::{StatementVisitor, walk_stmt},
 };
-use ruff_text_size::Ranged;
+use ruff_text_size::{Ranged, TextRange};
 use ty_project::Db;
 use ty_python_semantic::{
-    ResolvedDefinition, definitions_for_attribute, definitions_for_name,
-    semantic_index::definition::DefinitionKind,
+    ModuleName, ResolvedDefinition, definitions_for_attribute, definitions_for_name,
+    resolve_module,
+    semantic_index::{definition::DefinitionKind, global_scope},
+    types::resolve_definition::find_symbol_in_scope,
 };
 
 use crate::{
+    AnalysisOptions, ContextManagerEffect, ContextManagerEffectRule,
     module::ModuleCollector,
     transitive_error::{
         analysis::{AnalysisGap, AnalysisGapImpact, AnalysisGapKind, FunctionAnalysis},
@@ -25,6 +28,157 @@ use crate::{
         visitor::{FunctionTransitiveErrorVisitor, get_transitive_analysis},
     },
 };
+
+#[derive(Default)]
+pub(crate) struct ConfiguredContextManagerEffects {
+    pub(crate) errors: Vec<FunctionRaise>,
+    pub(crate) gaps: Vec<AnalysisGap>,
+    pub(crate) recognized: bool,
+}
+
+pub(crate) fn apply_configured_context_manager_effects(
+    db: &dyn Db,
+    file: File,
+    expression: &Expr,
+    options: &AnalysisOptions,
+    mut errors: Vec<FunctionRaise>,
+) -> ConfiguredContextManagerEffects {
+    let Some(call) = expression.as_call_expr() else {
+        return ConfiguredContextManagerEffects {
+            errors,
+            ..Default::default()
+        };
+    };
+    let mut result = ConfiguredContextManagerEffects::default();
+    for rule in options.context_manager_effects() {
+        let Some(parameter_index) = configured_function_parameter_index(
+            db,
+            file,
+            &call.func,
+            &rule.function,
+            &rule.exception_parameter,
+        ) else {
+            continue;
+        };
+        result.recognized = true;
+        let argument = call
+            .arguments
+            .find_keyword(&rule.exception_parameter)
+            .map(|keyword| &keyword.value)
+            .or_else(|| call.arguments.args.get(parameter_index));
+        let Some(exception) =
+            argument.and_then(|argument| try_extract_exception_from_expr(db, file, argument))
+        else {
+            result.gaps.push(AnalysisGap::new(
+                AnalysisGapKind::UnmodeledContextManager,
+                AnalysisGapImpact::Both,
+                file,
+                expression.range(),
+                Some(rule.function.clone()),
+            ));
+            continue;
+        };
+        errors = apply_configured_effect(errors, rule, &exception);
+    }
+    result.errors = errors;
+    result
+}
+
+fn apply_configured_effect(
+    errors: Vec<FunctionRaise>,
+    rule: &ContextManagerEffectRule,
+    exception: &Exception,
+) -> Vec<FunctionRaise> {
+    match rule.effect {
+        ContextManagerEffect::Suppress => errors
+            .into_iter()
+            .filter(|error| !error.name().is_subclass_of(exception))
+            .collect(),
+        ContextManagerEffect::Optional => errors
+            .into_iter()
+            .map(|error| {
+                if error.name().is_subclass_of(exception) {
+                    error.with_optional_documentation()
+                } else {
+                    error
+                }
+            })
+            .collect(),
+    }
+}
+
+fn configured_function_parameter_index(
+    db: &dyn Db,
+    file: File,
+    expression: &Expr,
+    configured_function: &str,
+    parameter: &str,
+) -> Option<usize> {
+    let expected = configured_function_definitions(db, configured_function, parameter);
+    if expected.is_empty() {
+        return None;
+    }
+    for definition in definitions_for_expression(db, file, expression) {
+        let ResolvedDefinition::Definition(definition) = definition else {
+            continue;
+        };
+        let definition_file = definition.file(db);
+        let module = parsed_module(db, definition_file).load(db);
+        let Some((definition_file, definition)) =
+            resolve_alias(db, &module, definition_file, definition)
+        else {
+            continue;
+        };
+        let range = definition.full_range(db, &parsed_module(db, definition_file).load(db));
+        if let Some((_, _, parameter_index)) = expected.iter().find(|(file, expected_range, _)| {
+            *file == definition_file && *expected_range == range.range()
+        }) {
+            return Some(*parameter_index);
+        }
+    }
+    None
+}
+
+fn configured_function_definitions(
+    db: &dyn Db,
+    configured_function: &str,
+    parameter: &str,
+) -> Vec<(File, TextRange, usize)> {
+    let mut components = configured_function.split('.').collect::<Vec<_>>();
+    let Some(symbol) = components.pop() else {
+        return Vec::new();
+    };
+    let Some(module_name) = ModuleName::from_components(components) else {
+        return Vec::new();
+    };
+    let Some(module) = resolve_module(db, &module_name) else {
+        return Vec::new();
+    };
+    let Some(module_file) = module.file(db) else {
+        return Vec::new();
+    };
+    find_symbol_in_scope(db, global_scope(db, module_file), symbol)
+        .into_iter()
+        .filter_map(|definition| {
+            let definition_file = definition.file(db);
+            let module = parsed_module(db, definition_file).load(db);
+            let (definition_file, definition) =
+                resolve_alias(db, &module, definition_file, definition)?;
+            let module = parsed_module(db, definition_file).load(db);
+            let mut collector = ModuleCollector::new();
+            collector.init(&module);
+            let range = definition.full_range(db, &module).range();
+            let function = collector.find_functions(&range).into_iter().next()?;
+            let parameter_index = function
+                .parameters
+                .posonlyargs
+                .iter()
+                .chain(&function.parameters.args)
+                .position(|candidate| candidate.name().as_str() == parameter)?;
+            Some((definition_file, range, parameter_index))
+        })
+        .collect()
+}
 
 #[derive(Default)]
 pub(crate) struct ContextManagerEffects {
@@ -45,6 +199,7 @@ pub(crate) fn context_manager_effects(
     target_exceptions: &Vec<Exception>,
     call_stack: CallStack,
     exception_capture_stack: &ExceptionCaptureStack,
+    analysis_options: &AnalysisOptions,
 ) -> ContextManagerEffects {
     let resolution_expression = expression
         .as_call_expr()
@@ -67,6 +222,7 @@ pub(crate) fn context_manager_effects(
         target_exceptions,
         call_stack,
         exception_capture_stack,
+        analysis_options,
         &mut effects,
         &mut exit_methods,
         &mut all_exit_methods_suppress,
@@ -101,6 +257,7 @@ pub(crate) fn apply_generator_context_manager(
     target_exceptions: &Vec<Exception>,
     call_stack: CallStack,
     exception_capture_stack: &ExceptionCaptureStack,
+    analysis_options: &AnalysisOptions,
     body_errors: Vec<FunctionRaise>,
 ) -> Option<FunctionAnalysis> {
     let mut analysis = FunctionAnalysis::default();
@@ -125,6 +282,7 @@ pub(crate) fn apply_generator_context_manager(
                 target_exceptions,
                 call_stack.push(key),
                 exception_capture_stack,
+                analysis_options,
             )
             .with_yield_errors(body_errors.clone())
             .transitive_analysis();
@@ -232,6 +390,7 @@ fn collect_effects(
     target_exceptions: &Vec<Exception>,
     call_stack: CallStack,
     exception_capture_stack: &ExceptionCaptureStack,
+    analysis_options: &AnalysisOptions,
     effects: &mut ContextManagerEffects,
     exit_methods: &mut usize,
     all_exit_methods_suppress: &mut bool,
@@ -274,6 +433,7 @@ fn collect_effects(
                     target_exceptions,
                     call_stack.clone(),
                     exception_capture_stack,
+                    analysis_options,
                     effects,
                     exit_methods,
                     all_exit_methods_suppress,
@@ -315,6 +475,7 @@ fn collect_effects(
                     target_exceptions,
                     call_stack.clone(),
                     exception_capture_stack,
+                    analysis_options,
                 );
                 effects.enter_errors.extend(analysis.errors);
                 effects.gaps.extend(analysis.gaps);
@@ -331,6 +492,7 @@ fn collect_effects(
                     target_exceptions,
                     call_stack.clone(),
                     exception_capture_stack,
+                    analysis_options,
                 );
                 effects.exit_errors.extend(analysis.errors);
                 effects.gaps.extend(analysis.gaps);
@@ -350,6 +512,7 @@ fn collect_effects(
                     target_exceptions,
                     call_stack.clone(),
                     exception_capture_stack,
+                    analysis_options,
                     effects,
                     exit_methods,
                     all_exit_methods_suppress,
@@ -372,6 +535,7 @@ fn method_analysis(
     target_exceptions: &Vec<Exception>,
     call_stack: CallStack,
     exception_capture_stack: &ExceptionCaptureStack,
+    analysis_options: &AnalysisOptions,
 ) -> FunctionAnalysis {
     let path = match definition_file.path(db) {
         FilePath::System(path) => path,
@@ -409,6 +573,7 @@ fn method_analysis(
         target_exceptions,
         call_stack.push(key),
         exception_capture_stack,
+        analysis_options,
     );
     analysis.errors = analysis
         .errors

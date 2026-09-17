@@ -10,6 +10,7 @@ use ty_project::Db;
 use ty_python_semantic::{ResolvedDefinition, definitions_for_attribute, definitions_for_name};
 
 use crate::{
+    AnalysisOptions,
     module::ModuleCollector,
     transitive_error::{
         analysis::{AnalysisGap, AnalysisGapImpact, AnalysisGapKind, FunctionAnalysis},
@@ -31,6 +32,7 @@ pub(crate) fn apply_decorators(
     target_exceptions: &Vec<Exception>,
     call_stack: CallStack,
     exception_capture_stack: &ExceptionCaptureStack,
+    analysis_options: &AnalysisOptions,
     mut analysis: FunctionAnalysis,
 ) -> FunctionAnalysis {
     for decorator in function.decorator_list.iter().rev() {
@@ -47,6 +49,7 @@ pub(crate) fn apply_decorators(
             target_exceptions,
             call_stack.clone(),
             exception_capture_stack,
+            analysis_options,
             analysis.errors.clone(),
         ) {
             analysis.errors = context_manager_analysis.errors;
@@ -89,6 +92,7 @@ pub(crate) fn apply_decorators(
                             target_exceptions,
                             call_stack.clone(),
                             exception_capture_stack,
+                            analysis_options,
                             &analysis.errors,
                             &mut transformed,
                             &mut transformed_gaps,
@@ -102,6 +106,7 @@ pub(crate) fn apply_decorators(
                         target_exceptions,
                         call_stack.clone(),
                         exception_capture_stack,
+                        analysis_options,
                         &analysis.errors,
                         &mut transformed,
                         &mut transformed_gaps,
@@ -135,6 +140,7 @@ fn transform_with_decorator(
     target_exceptions: &Vec<Exception>,
     call_stack: CallStack,
     exception_capture_stack: &ExceptionCaptureStack,
+    analysis_options: &AnalysisOptions,
     errors: &[FunctionRaise],
     transformed: &mut Vec<FunctionRaise>,
     transformed_gaps: &mut Vec<AnalysisGap>,
@@ -155,6 +161,7 @@ fn transform_with_decorator(
             target_exceptions,
             call_stack.clone(),
             exception_capture_stack,
+            analysis_options,
         )
         .with_callable_errors(vec![(parameter.to_string(), errors.to_vec())])
         .transitive_analysis();

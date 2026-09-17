@@ -10,3 +10,8 @@ extra-search-paths = ["shared"]
 output-format = "concise"
 color = "never"
 exclude = ["excluded.py"]
+
+[[tool.py-checked-exceptions.context-manager-effects]]
+function = "errors.optional_errors"
+exception-parameter = "error_type"
+effect = "optional"

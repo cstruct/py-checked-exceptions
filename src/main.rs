@@ -108,7 +108,14 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
         .map(|path| resolve_absolute_module_path(&db, &path))
         .collect();
 
-    let analysis_options = AnalysisOptions::default().with_extensions(extensions);
+    let analysis_options = AnalysisOptions::default()
+        .with_extensions(extensions)
+        .with_context_manager_effects(
+            project_config
+                .context_manager_effects
+                .clone()
+                .unwrap_or_default(),
+        );
     let events =
         analyze_project_with_options(db.clone(), target_exceptions, Some(&PB), analysis_options)?;
     let mut diagnostics = Vec::new();

@@ -1,7 +1,7 @@
 use std::{io::ErrorKind, sync::Arc};
 
 use anyhow::{Context, Result};
-use py_checked_exceptions::AnalysisExtension;
+use py_checked_exceptions::{AnalysisExtension, ContextManagerEffectRule};
 use ruff_db::system::{System, SystemPath, SystemPathBuf};
 use serde::Deserialize;
 use ty_project::metadata::{
@@ -17,6 +17,7 @@ use crate::args::{AnalysisGapOutput, OutputFormat, TerminalColor};
 pub(crate) struct ProjectConfig {
     pub(crate) target_exceptions: Option<Vec<String>>,
     pub(crate) extensions: Option<Vec<AnalysisExtension>>,
+    pub(crate) context_manager_effects: Option<Vec<ContextManagerEffectRule>>,
     pub(crate) python: Option<String>,
     pub(crate) typeshed: Option<String>,
     pub(crate) extra_search_paths: Option<Vec<String>>,
@@ -121,6 +122,7 @@ pub(crate) fn load_project_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use py_checked_exceptions::ContextManagerEffect;
 
     #[test]
     fn parses_pyproject_configuration() {
@@ -143,6 +145,16 @@ mod tests {
                 show-analysis-gaps = "full"
                 respect-ignore-files = false
                 exclude = ["generated", "tests/fixtures/**"]
+
+                [[tool.py-checked-exceptions.context-manager-effects]]
+                function = "example.suppress_error"
+                exception-parameter = "error_type"
+                effect = "optional"
+
+                [[tool.py-checked-exceptions.context-manager-effects]]
+                function = "example.suppress_error"
+                exception-parameter = "error_type"
+                effect = "suppress"
             "#,
         )
         .unwrap();
@@ -153,6 +165,12 @@ mod tests {
             Some(vec!["example.BaseError".into()])
         );
         assert_eq!(config.extensions, Some(vec![AnalysisExtension::Fastapi]));
+        let effects = config.context_manager_effects.unwrap();
+        assert_eq!(effects.len(), 2);
+        assert_eq!(effects[0].function, "example.suppress_error");
+        assert_eq!(effects[0].exception_parameter, "error_type");
+        assert_eq!(effects[0].effect, ContextManagerEffect::Optional);
+        assert_eq!(effects[1].effect, ContextManagerEffect::Suppress);
         assert_eq!(config.python.as_deref(), Some(".venv"));
         assert_eq!(config.typeshed.as_deref(), Some("typings/typeshed"));
         assert_eq!(

@@ -8,14 +8,17 @@ use ty_python_semantic::{
     ResolvedDefinition, SemanticModel, definitions_for_attribute, definitions_for_name,
 };
 
-use crate::transitive_error::{
-    analysis::{AnalysisGap, AnalysisGapImpact, AnalysisGapKind, FunctionAnalysis},
-    call_stack::CallStack,
-    capture_stack::ExceptionCaptureStack,
-    exception::Exception,
-    extract::extract_analysis,
-    raise::FunctionRaise,
-    visitor::normalize_errors,
+use crate::{
+    AnalysisOptions,
+    transitive_error::{
+        analysis::{AnalysisGap, AnalysisGapImpact, AnalysisGapKind, FunctionAnalysis},
+        call_stack::CallStack,
+        capture_stack::ExceptionCaptureStack,
+        exception::Exception,
+        extract::extract_analysis,
+        raise::FunctionRaise,
+        visitor::normalize_errors,
+    },
 };
 
 pub(crate) type CallableErrors = Vec<(String, Vec<FunctionRaise>)>;
@@ -64,6 +67,7 @@ pub(crate) fn callable_analysis_for_call(
     call_stack: CallStack,
     exception_capture_stack: &ExceptionCaptureStack,
     inherited_callable_errors: &CallableErrors,
+    analysis_options: &AnalysisOptions,
 ) -> CallableAnalysis {
     if call.arguments.is_empty() {
         return CallableAnalysis::default();
@@ -107,6 +111,7 @@ pub(crate) fn callable_analysis_for_call(
             call_stack.clone(),
             exception_capture_stack,
             inherited_callable_errors,
+            analysis_options,
         );
         gaps.extend(analysis.gaps);
         if analysis.errors.is_empty() {
@@ -145,6 +150,7 @@ fn callable_expression_analysis(
     call_stack: CallStack,
     exception_capture_stack: &ExceptionCaptureStack,
     inherited_callable_errors: &CallableErrors,
+    analysis_options: &AnalysisOptions,
 ) -> FunctionAnalysis {
     if let Some(name) = expression.as_name_expr()
         && let Some((_, errors)) = inherited_callable_errors
@@ -189,6 +195,7 @@ fn callable_expression_analysis(
             target_exceptions.to_vec(),
             call_stack.clone(),
             exception_capture_stack.clone(),
+            analysis_options.clone(),
             vec![],
         );
         analysis.errors.extend(callback_analysis.errors);
