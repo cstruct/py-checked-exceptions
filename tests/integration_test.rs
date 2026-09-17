@@ -378,6 +378,11 @@ fn test_higher_order_functions() -> Result<()> {
                 (137, 5),
                 (137, 42),
             ),
+            (
+                "Raises undocumented error CallbackError",
+                (144, 5),
+                (144, 55),
+            ),
         ],
     )
 }

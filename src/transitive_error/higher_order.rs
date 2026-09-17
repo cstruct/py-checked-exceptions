@@ -3,10 +3,9 @@ use ruff_db::files::{File, FilePath};
 use ruff_python_ast::{Expr, ExprCall};
 use ruff_text_size::Ranged;
 use ty_project::Db;
+use ty_python_semantic::semantic_index::definition::DefinitionKind;
 use ty_python_semantic::types::{call_signature_details, find_active_signature_from_details};
-use ty_python_semantic::{
-    ResolvedDefinition, SemanticModel, definitions_for_attribute, definitions_for_name,
-};
+use ty_python_semantic::{ResolvedDefinition, SemanticModel};
 
 use crate::{
     AnalysisOptions,
@@ -15,7 +14,7 @@ use crate::{
         call_stack::CallStack,
         capture_stack::ExceptionCaptureStack,
         exception::Exception,
-        extract::extract_analysis,
+        extract::{definitions_for_expression, extract_analysis},
         raise::FunctionRaise,
         visitor::normalize_errors,
     },
@@ -73,11 +72,10 @@ pub(crate) fn callable_analysis_for_call(
         return CallableAnalysis::default();
     }
     let arguments = call.arguments.arguments_source_order().collect_vec();
+    // A plain name or attribute is usually data, not a callback. Avoid expensive signature
+    // inference unless at least one argument resolves to an actual function-like value.
     if !arguments.iter().any(|argument| {
-        matches!(
-            argument.value(),
-            Expr::Name(_) | Expr::Attribute(_) | Expr::Lambda(_)
-        )
+        is_potential_callable_argument(db, file, argument.value(), inherited_callable_errors)
     }) {
         return CallableAnalysis::default();
     }
@@ -141,6 +139,34 @@ pub(crate) fn callable_analysis_for_call(
     }
 }
 
+fn is_potential_callable_argument(
+    db: &dyn Db,
+    file: File,
+    expression: &Expr,
+    inherited_callable_errors: &CallableErrors,
+) -> bool {
+    match expression {
+        Expr::Lambda(_) => true,
+        Expr::Name(name)
+            if inherited_callable_errors
+                .iter()
+                .any(|(callable, _)| callable == name.id.as_str()) =>
+        {
+            true
+        }
+        Expr::Name(_) | Expr::Attribute(_) => definitions_for_expression(db, file, expression)
+            .into_iter()
+            .any(|definition| {
+                matches!(
+                    definition,
+                    ResolvedDefinition::Definition(definition)
+                        if matches!(definition.kind(db), DefinitionKind::Function(_))
+                )
+            }),
+        _ => false,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn callable_expression_analysis(
     db: &dyn Db,
@@ -164,8 +190,7 @@ fn callable_expression_analysis(
     }
 
     let definitions = match expression {
-        Expr::Name(name) => definitions_for_name(db, file, name),
-        Expr::Attribute(attribute) => definitions_for_attribute(db, file, attribute),
+        Expr::Name(_) | Expr::Attribute(_) => definitions_for_expression(db, file, expression),
         Expr::Lambda(_) => {
             return FunctionAnalysis {
                 errors: vec![],
@@ -225,17 +250,5 @@ fn eager_stdlib_callback_parameter(
             Some("repl".into())
         }
         _ => None,
-    }
-}
-
-fn definitions_for_expression<'a>(
-    db: &'a dyn Db,
-    file: File,
-    expression: &Expr,
-) -> Vec<ResolvedDefinition<'a>> {
-    match expression {
-        Expr::Name(name) => definitions_for_name(db, file, name),
-        Expr::Attribute(attribute) => definitions_for_attribute(db, file, attribute),
-        _ => Vec::new(),
     }
 }

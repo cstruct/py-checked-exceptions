@@ -4,7 +4,7 @@ use ruff_python_ast::visitor::{Visitor, walk_expr, walk_stmt};
 use ruff_python_ast::{Expr, ExprCall, Stmt, StmtFunctionDef, StmtTry, WithItem};
 use ruff_text_size::Ranged;
 use ty_project::Db;
-use ty_python_semantic::{ResolvedDefinition, definitions_for_attribute, definitions_for_name};
+use ty_python_semantic::ResolvedDefinition;
 
 use crate::AnalysisOptions;
 use crate::transitive_error::analysis::{
@@ -19,7 +19,8 @@ use crate::transitive_error::context_manager::{
 use crate::transitive_error::decorator::apply_decorators;
 use crate::transitive_error::exception::Exception;
 use crate::transitive_error::extract::{
-    extract_analysis, extract_caught_exceptions, try_extract_exception_from_expr,
+    definitions_for_expression, extract_analysis, extract_caught_exceptions, is_module_attribute,
+    is_opaque_call_target, try_extract_exception_from_expr,
 };
 use crate::transitive_error::higher_order::{
     CallableErrors, callable_analysis_for_call, eager_stdlib_callback_errors,
@@ -94,6 +95,7 @@ pub(crate) struct FunctionTransitiveErrorVisitor<'a> {
     try_block_exceptions: Vec<Vec<Exception>>,
     callable_errors: CallableErrors,
     yield_errors: Vec<FunctionRaise>,
+    opaque_values: std::collections::HashSet<String>,
 }
 
 impl<'a> FunctionTransitiveErrorVisitor<'a> {
@@ -119,6 +121,7 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
             try_block_exceptions: vec![],
             callable_errors: vec![],
             yield_errors: vec![],
+            opaque_values: std::collections::HashSet::new(),
         }
     }
 
@@ -149,14 +152,32 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
             return;
         };
 
-        let is_generator =
-            is_generator_context_manager(self.db, self.file, &item.context_expr, is_async);
+        let opaque_context_manager = item
+            .context_expr
+            .as_call_expr()
+            .is_some_and(|call| self.call_has_opaque_receiver(call));
+        let is_generator = !opaque_context_manager
+            && is_generator_context_manager(self.db, self.file, &item.context_expr, is_async);
         // Calling a generator function only creates the context manager. Its arguments are
         // evaluated now, while its body is evaluated around the yield below.
         if is_generator {
             self.visit_context_manager_arguments(&item.context_expr);
         } else {
             self.visit_expr(&item.context_expr);
+        }
+        if opaque_context_manager {
+            if let Some(optional_vars) = item.optional_vars.as_deref() {
+                self.mark_opaque_target(optional_vars);
+            }
+            self.gaps.push(AnalysisGap::new(
+                AnalysisGapKind::UnmodeledContextManager,
+                AnalysisGapImpact::Both,
+                self.file,
+                item.context_expr.range(),
+                None,
+            ));
+            self.visit_with_items(remaining_items, body, is_async);
+            return;
         }
         let effects = context_manager_effects(
             self.db,
@@ -187,6 +208,12 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
             ));
         }
         self.errors.extend(effects.enter_errors);
+        if let Some(optional_vars) = item.optional_vars.as_deref() {
+            // Resolving the runtime value returned by `__(a)enter__` requires the same inference
+            // that can fail for native and highly dynamic context managers. Calls through the
+            // bound value are therefore tracked as opaque analysis gaps.
+            self.mark_opaque_target(optional_vars);
+        }
 
         // Multiple context managers are equivalent to nested `with` statements. An outer exit can
         // therefore suppress failures from an inner enter, body, or exit, but never its own enter.
@@ -247,10 +274,62 @@ impl<'a> FunctionTransitiveErrorVisitor<'a> {
             self.visit_expr(&keyword.value);
         }
     }
+
+    fn expression_is_opaque(&self, expression: &Expr) -> bool {
+        match expression {
+            Expr::Await(await_expression) => self.expression_is_opaque(&await_expression.value),
+            Expr::Call(call) => self.call_is_opaque(call),
+            Expr::Name(name) => self.opaque_values.contains(name.id.as_str()),
+            _ => false,
+        }
+    }
+
+    fn call_has_opaque_receiver(&self, call: &ExprCall) -> bool {
+        call.func
+            .as_attribute_expr()
+            .is_some_and(|attribute| self.is_opaque_receiver(&attribute.value))
+    }
+
+    fn call_is_opaque(&self, call: &ExprCall) -> bool {
+        is_opaque_call_target(self.db, self.file, &call.func) || self.call_has_opaque_receiver(call)
+    }
+
+    fn is_opaque_receiver(&self, expression: &Expr) -> bool {
+        match expression {
+            Expr::Name(name) => self.opaque_values.contains(name.id.as_str()),
+            Expr::Attribute(attribute) => self.is_opaque_receiver(&attribute.value),
+            Expr::Call(call) => self.call_is_opaque(call),
+            _ => false,
+        }
+    }
+
+    fn mark_opaque_targets(&mut self, targets: &[Expr]) {
+        for target in targets {
+            self.mark_opaque_target(target);
+        }
+    }
+
+    fn mark_opaque_target(&mut self, target: &Expr) {
+        match target {
+            Expr::Name(name) => {
+                self.opaque_values.insert(name.id.to_string());
+            }
+            Expr::Tuple(tuple) => self.mark_opaque_targets(&tuple.elts),
+            Expr::List(list) => self.mark_opaque_targets(&list.elts),
+            _ => {}
+        }
+    }
 }
 
 impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
     fn visit_stmt(&mut self, stmt: &'a Stmt) {
+        if let Stmt::Assign(assign) = stmt
+            && self.expression_is_opaque(&assign.value)
+        {
+            // Preserve the opacity of values returned by third-party constructors and calls so
+            // subsequent method calls do not re-enter unsafe type inference.
+            self.mark_opaque_targets(&assign.targets);
+        }
         if let Stmt::Raise(raise) = stmt {
             if raise.exc.is_none() {
                 if let Some(handler_exceptions) = self
@@ -396,12 +475,27 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                     .filter(|error| !self.exception_capture_stack.is_captured(error.name())),
             );
         } else if let Expr::Call(call) = expr {
+            let opaque_receiver = self.call_has_opaque_receiver(call);
             // Calling a decorated generator creates a context manager without running its body.
             // The body is analyzed when that value is used by a matching `with` statement.
-            if is_generator_context_manager(self.db, self.file, expr, false)
-                || is_generator_context_manager(self.db, self.file, expr, true)
+            if !opaque_receiver
+                && (is_generator_context_manager(self.db, self.file, expr, false)
+                    || is_generator_context_manager(self.db, self.file, expr, true))
             {
                 self.visit_context_manager_arguments(expr);
+                return;
+            }
+            if opaque_receiver {
+                self.gaps.push(AnalysisGap::new(
+                    AnalysisGapKind::OpaqueCall,
+                    AnalysisGapImpact::MayMissErrors,
+                    self.file,
+                    call.range,
+                    call.func
+                        .as_attribute_expr()
+                        .map(|attribute| attribute.attr.to_string()),
+                ));
+                walk_expr(self, expr);
                 return;
             }
             let callable_errors = call.func.as_name_expr().and_then(|name| {
@@ -419,25 +513,36 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
             } else if let Some(defs) =
                 definitions_for_call_func(self.db, self.file, *call.func.clone())
             {
-                if defs.is_empty() {
+                let definitions_empty = defs.is_empty();
+                let module_attribute = is_module_attribute(self.db, self.file, &call.func);
+                let opaque_call_target = is_opaque_call_target(self.db, self.file, &call.func);
+                if definitions_empty {
                     self.gaps.push(AnalysisGap::new(
-                        AnalysisGapKind::DynamicCall,
+                        if module_attribute {
+                            AnalysisGapKind::OpaqueCall
+                        } else {
+                            AnalysisGapKind::DynamicCall
+                        },
                         AnalysisGapImpact::MayMissErrors,
                         self.file,
                         call.range,
                         None,
                     ));
                 }
-                let callable_analysis = callable_analysis_for_call(
-                    self.db,
-                    self.file,
-                    call,
-                    self.target_exceptions,
-                    self.call_stack.clone(),
-                    &self.exception_capture_stack,
-                    &self.callable_errors,
-                    self.analysis_options,
-                );
+                let callable_analysis = if opaque_call_target {
+                    Default::default()
+                } else {
+                    callable_analysis_for_call(
+                        self.db,
+                        self.file,
+                        call,
+                        self.target_exceptions,
+                        self.call_stack.clone(),
+                        &self.exception_capture_stack,
+                        &self.callable_errors,
+                        self.analysis_options,
+                    )
+                };
                 self.gaps.extend(callable_analysis.gaps);
                 self.errors.extend(
                     eager_stdlib_callback_errors(
@@ -503,7 +608,7 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                         self.gaps.extend(transitive.gaps);
                     }
                 }
-                if !resolved_definition {
+                if !resolved_definition && !definitions_empty {
                     self.gaps.push(AnalysisGap::new(
                         AnalysisGapKind::DynamicCall,
                         AnalysisGapImpact::MayMissErrors,
@@ -541,10 +646,8 @@ fn definitions_for_call_func<'a>(
     file: File,
     func: Expr,
 ) -> Option<Vec<ResolvedDefinition<'a>>> {
-    if let Expr::Name(ref name) = func {
-        return Some(definitions_for_name(db, file, name));
-    } else if let Expr::Attribute(ref attr) = func {
-        return Some(definitions_for_attribute(db, file, attr));
+    if matches!(func, Expr::Name(_) | Expr::Attribute(_)) {
+        return Some(definitions_for_expression(db, file, &func));
     }
     None
 }

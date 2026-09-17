@@ -135,3 +135,10 @@ class CallbackInvoker:
 def higher_order_method_propagates() -> None:
     invoker = CallbackInvoker()
     invoker.invoke(raises_callback_error)
+
+
+import higher_order_helpers
+
+
+def module_higher_order_function_propagates() -> None:
+    higher_order_helpers.invoke(raises_callback_error)

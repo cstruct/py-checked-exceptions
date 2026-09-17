@@ -7,7 +7,7 @@ use ruff_python_ast::{
 };
 use ruff_text_size::Ranged;
 use ty_project::Db;
-use ty_python_semantic::{ResolvedDefinition, definitions_for_attribute, definitions_for_name};
+use ty_python_semantic::ResolvedDefinition;
 
 use crate::{
     AnalysisOptions,
@@ -18,7 +18,7 @@ use crate::{
         capture_stack::ExceptionCaptureStack,
         context_manager::{apply_generator_context_manager, is_contextlib_member},
         exception::Exception,
-        extract::resolve_alias,
+        extract::{definitions_for_expression, resolve_alias},
         raise::FunctionRaise,
         visitor::FunctionTransitiveErrorVisitor,
     },
@@ -175,18 +175,6 @@ fn expression_name(expression: &Expr) -> Option<String> {
         Expr::Name(name) => Some(name.id.to_string()),
         Expr::Attribute(attribute) => Some(attribute.attr.to_string()),
         _ => None,
-    }
-}
-
-fn definitions_for_expression<'a>(
-    db: &'a dyn Db,
-    file: File,
-    expression: &Expr,
-) -> Vec<ResolvedDefinition<'a>> {
-    match expression {
-        Expr::Name(name) => definitions_for_name(db, file, name),
-        Expr::Attribute(attribute) => definitions_for_attribute(db, file, attribute),
-        _ => Vec::new(),
     }
 }
 

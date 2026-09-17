@@ -3,8 +3,8 @@ use ruff_python_ast::statement_visitor::{StatementVisitor, walk_stmt};
 use ruff_python_ast::{Expr, ExprCall, Operator, Stmt, StmtFunctionDef};
 use ruff_text_size::{Ranged, TextRange};
 use ty_project::Db;
+use ty_python_semantic::ResolvedDefinition;
 use ty_python_semantic::semantic_index::definition::DefinitionKind;
-use ty_python_semantic::{ResolvedDefinition, definitions_for_attribute, definitions_for_name};
 
 use crate::{
     AnalysisOptions,
@@ -14,7 +14,7 @@ use crate::{
         call_stack::CallStack,
         capture_stack::ExceptionCaptureStack,
         exception::{Exception, canonical_exception_expression},
-        extract::{extract_analysis, resolve_alias},
+        extract::{definitions_for_expression, extract_analysis, resolve_alias},
         visitor::{get_transitive_analysis, normalize_errors},
     },
 };
@@ -751,18 +751,6 @@ fn unsupported_dependency(file: File, range: TextRange) -> FunctionAnalysis {
             range,
             None,
         )],
-    }
-}
-
-fn definitions_for_expression<'a>(
-    db: &'a dyn Db,
-    file: File,
-    expression: &Expr,
-) -> Vec<ResolvedDefinition<'a>> {
-    match expression {
-        Expr::Name(name) => definitions_for_name(db, file, name),
-        Expr::Attribute(attribute) => definitions_for_attribute(db, file, attribute),
-        _ => Vec::new(),
     }
 }
 

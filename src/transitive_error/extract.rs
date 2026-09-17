@@ -1,10 +1,14 @@
 use ruff_db::{files::File, parsed::parsed_module};
-use ruff_python_ast::{ExceptHandler, Expr, ExprTuple};
+use ruff_python_ast::{ExceptHandler, Expr, ExprTuple, Stmt};
 use ruff_text_size::{Ranged, TextRange};
 use ty_project::Db;
 use ty_python_semantic::{
     ResolvedDefinition, definitions_for_attribute, definitions_for_name,
-    semantic_index::definition::{Definition, DefinitionKind},
+    semantic_index::{
+        definition::{Definition, DefinitionKind},
+        global_scope, semantic_index,
+    },
+    types::resolve_definition::find_symbol_in_scope,
 };
 
 use crate::{
@@ -68,6 +72,19 @@ pub(crate) fn extract_analysis<'db>(
     analysis_options: AnalysisOptions,
     callable_errors: CallableErrors,
 ) -> FunctionAnalysis {
+    if matches!(definition_file.path(db), ruff_db::files::FilePath::System(path) if is_site_packages_path(path.as_str()))
+    {
+        return FunctionAnalysis {
+            errors: vec![],
+            gaps: vec![AnalysisGap::new(
+                AnalysisGapKind::OpaqueCall,
+                AnalysisGapImpact::MayMissErrors,
+                expr_file,
+                expr_range,
+                definition.name(db).map(|name| name.to_string()),
+            )],
+        };
+    }
     let Some((definition_file, definition)) = resolve_alias(db, definition_file, definition) else {
         return FunctionAnalysis {
             errors: vec![],
@@ -80,6 +97,19 @@ pub(crate) fn extract_analysis<'db>(
             )],
         };
     };
+    if matches!(definition_file.path(db), ruff_db::files::FilePath::System(path) if is_site_packages_path(path.as_str()))
+    {
+        return FunctionAnalysis {
+            errors: vec![],
+            gaps: vec![AnalysisGap::new(
+                AnalysisGapKind::OpaqueCall,
+                AnalysisGapImpact::MayMissErrors,
+                expr_file,
+                expr_range,
+                definition.name(db).map(|name| name.to_string()),
+            )],
+        };
+    }
     if matches!(
         definition_file.path(db),
         ruff_db::files::FilePath::System(path) if path.extension() == Some("pyi")
@@ -260,4 +290,185 @@ pub(crate) fn try_extract_exception_from_expr(
         }
     }
     None
+}
+
+pub(crate) fn definitions_for_expression<'db>(
+    db: &'db dyn Db,
+    file: File,
+    expression: &Expr,
+) -> Vec<ResolvedDefinition<'db>> {
+    // Prefer syntax-level module and class lookup where possible. Asking ty to infer these
+    // attributes can pull an entire dependency graph into a query and, for sufficiently dynamic
+    // libraries, make the underlying Salsa query cycle or overflow its stack.
+    match expression {
+        Expr::Name(name) => definitions_for_name(db, file, name),
+        Expr::Attribute(attribute) => {
+            if let Some(definitions) = module_attribute_definitions(db, file, attribute) {
+                definitions
+            } else if let Some(definitions) = class_attribute_definitions(db, file, attribute) {
+                definitions
+            } else {
+                definitions_for_attribute(db, file, attribute)
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn class_attribute_definitions<'db>(
+    db: &'db dyn Db,
+    file: File,
+    attribute: &ruff_python_ast::ExprAttribute,
+) -> Option<Vec<ResolvedDefinition<'db>>> {
+    let root_name = attribute_root_name(&attribute.value)?;
+    let classes = definitions_for_name(db, file, root_name)
+        .into_iter()
+        .filter_map(|definition| match definition {
+            ResolvedDefinition::Definition(definition)
+                if matches!(definition.kind(db), DefinitionKind::Class(_)) =>
+            {
+                Some(definition)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if classes.is_empty() {
+        return None;
+    }
+    // Chained class attributes (for example `Model.id.eq`) need descriptor inference. Leave them
+    // unresolved instead of invoking the unsafe fallback after identifying the class root.
+    if !matches!(attribute.value.as_ref(), Expr::Name(_)) {
+        return Some(Vec::new());
+    }
+    Some(
+        classes
+            .into_iter()
+            .flat_map(|definition| {
+                let definition_file = definition.file(db);
+                let module = parsed_module(db, definition_file).load(db);
+                let mut collector = ModuleCollector::new();
+                collector.init(&module);
+                let range = definition.full_range(db, &module).range();
+                collector
+                    .find_class(&range)
+                    .into_iter()
+                    .flat_map(|class| &class.body)
+                    .filter_map(Stmt::as_function_def_stmt)
+                    .filter(|function| function.name == attribute.attr)
+                    .map(|function| {
+                        ResolvedDefinition::Definition(
+                            semantic_index(db, definition_file).expect_single_definition(function),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect(),
+    )
+}
+
+pub(crate) fn is_module_attribute(db: &dyn Db, file: File, expression: &Expr) -> bool {
+    let Expr::Attribute(attribute) = expression else {
+        return false;
+    };
+    module_attribute_definitions(db, file, attribute).is_some()
+}
+
+pub(crate) fn is_opaque_module_attribute(db: &dyn Db, file: File, expression: &Expr) -> bool {
+    let Expr::Attribute(attribute) = expression else {
+        return false;
+    };
+    let Some(root_name) = attribute_root_name(&attribute.value) else {
+        return false;
+    };
+    module_files_for_name(db, file, root_name).is_some_and(|modules| {
+        modules.iter().any(|module| {
+            matches!(module.path(db), ruff_db::files::FilePath::System(path) if is_site_packages_path(path.as_str()))
+        })
+    })
+}
+
+pub(crate) fn is_opaque_call_target(db: &dyn Db, file: File, expression: &Expr) -> bool {
+    if is_opaque_module_attribute(db, file, expression) {
+        return true;
+    }
+    let Expr::Name(_) = expression else {
+        return false;
+    };
+    definitions_for_expression(db, file, expression)
+        .into_iter()
+        .any(|definition| {
+            let definition_file = match definition {
+                ResolvedDefinition::Definition(definition) => definition.file(db),
+                ResolvedDefinition::Module(file) => file,
+                ResolvedDefinition::FileWithRange(range) => range.file(),
+            };
+            matches!(definition_file.path(db), ruff_db::files::FilePath::System(path) if is_site_packages_path(path.as_str()))
+        })
+}
+
+fn module_attribute_definitions<'db>(
+    db: &'db dyn Db,
+    file: File,
+    attribute: &ruff_python_ast::ExprAttribute,
+) -> Option<Vec<ResolvedDefinition<'db>>> {
+    let modules = module_files_for_attribute(db, file, attribute)?;
+    if modules
+        .iter()
+        .all(|module| matches!(module.path(db), ruff_db::files::FilePath::Vendored(_)))
+    {
+        return None;
+    }
+    if modules.iter().any(|module| {
+        matches!(module.path(db), ruff_db::files::FilePath::System(path) if is_site_packages_path(path.as_str()))
+    }) {
+        // Third-party code remains available for resolving imported names and annotations, but its
+        // runtime exception effects are an opaque boundary.
+        return Some(Vec::new());
+    }
+    Some(
+        modules
+            .into_iter()
+            .flat_map(|module| {
+                find_symbol_in_scope(db, global_scope(db, module), attribute.attr.as_str())
+                    .into_iter()
+                    .map(ResolvedDefinition::Definition)
+            })
+            .collect(),
+    )
+}
+
+fn module_files_for_attribute(
+    db: &dyn Db,
+    file: File,
+    attribute: &ruff_python_ast::ExprAttribute,
+) -> Option<Vec<File>> {
+    let module_name = attribute.value.as_name_expr()?;
+    module_files_for_name(db, file, module_name)
+}
+
+fn module_files_for_name(
+    db: &dyn Db,
+    file: File,
+    module_name: &ruff_python_ast::ExprName,
+) -> Option<Vec<File>> {
+    let modules = definitions_for_name(db, file, module_name)
+        .into_iter()
+        .filter_map(|definition| match definition {
+            ResolvedDefinition::Module(file) => Some(file),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    (!modules.is_empty()).then_some(modules)
+}
+
+fn attribute_root_name(expression: &Expr) -> Option<&ruff_python_ast::ExprName> {
+    match expression {
+        Expr::Name(name) => Some(name),
+        Expr::Attribute(attribute) => attribute_root_name(&attribute.value),
+        _ => None,
+    }
+}
+
+fn is_site_packages_path(path: &str) -> bool {
+    path.contains("/site-packages/") || path.contains("/dist-packages/")
 }

@@ -9,8 +9,7 @@ use ruff_python_ast::{
 use ruff_text_size::{Ranged, TextRange};
 use ty_project::Db;
 use ty_python_semantic::{
-    ModuleName, ResolvedDefinition, definitions_for_attribute, definitions_for_name,
-    resolve_module,
+    ModuleName, ResolvedDefinition, resolve_module,
     semantic_index::{definition::DefinitionKind, global_scope},
     types::resolve_definition::find_symbol_in_scope,
 };
@@ -23,7 +22,7 @@ use crate::{
         call_stack::CallStack,
         capture_stack::ExceptionCaptureStack,
         exception::Exception,
-        extract::{resolve_alias, try_extract_exception_from_expr},
+        extract::{definitions_for_expression, resolve_alias, try_extract_exception_from_expr},
         raise::FunctionRaise,
         visitor::{FunctionTransitiveErrorVisitor, get_transitive_analysis},
     },
@@ -575,18 +574,6 @@ fn method_analysis(
         .map(|error| error.transitive(call_file, expression.range()))
         .collect();
     analysis
-}
-
-fn definitions_for_expression<'a>(
-    db: &'a dyn Db,
-    file: File,
-    expression: &Expr,
-) -> Vec<ResolvedDefinition<'a>> {
-    match expression {
-        Expr::Name(name) => definitions_for_name(db, file, name),
-        Expr::Attribute(attribute) => definitions_for_attribute(db, file, attribute),
-        _ => Vec::new(),
-    }
 }
 
 fn contextlib_suppressed_exceptions(
