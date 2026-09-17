@@ -21,9 +21,11 @@ use crate::transitive_error::capture_stack::ExceptionCaptureStack;
 use crate::transitive_error::visitor::get_transitive_analysis;
 
 mod docstring;
+mod extension;
 mod module;
 mod transitive_error;
 
+pub use extension::{AnalysisExtension, AnalysisOptions};
 pub use transitive_error::analysis::{AnalysisGap, AnalysisGapImpact, AnalysisGapKind};
 pub use transitive_error::exception::Exception;
 pub use transitive_error::extract::extract_exception;
@@ -54,6 +56,20 @@ pub fn analyze_project_with_gaps(
     target_exceptions: Vec<crate::Exception>,
     progress_bar: Option<&'static ProgressBar>,
 ) -> Result<impl Iterator<Item = AnalysisEvent>> {
+    analyze_project_with_options(
+        db,
+        target_exceptions,
+        progress_bar,
+        AnalysisOptions::default(),
+    )
+}
+
+pub fn analyze_project_with_options(
+    db: ProjectDatabase,
+    target_exceptions: Vec<crate::Exception>,
+    progress_bar: Option<&'static ProgressBar>,
+    options: AnalysisOptions,
+) -> Result<impl Iterator<Item = AnalysisEvent>> {
     let (sender, receiver) = bounded(10);
     let files = db.project().files(&db).clone();
     if let Some(pb) = &progress_bar {
@@ -66,10 +82,10 @@ pub fn analyze_project_with_gaps(
         }
 
         files.into_par_iter().for_each_with(
-            (db, target_exceptions),
-            |(db, target_exceptions), file| {
+            (db, target_exceptions, options),
+            |(db, target_exceptions, options), file| {
                 let db2 = db.clone();
-                analyze_file_with_gaps(db, &sender, file, target_exceptions);
+                analyze_file_with_gaps(db, &sender, file, target_exceptions, options);
                 if let Some(pb) = &progress_bar {
                     pb.set_message(file.path(&db2).as_str().to_string());
                     pb.inc(1);
@@ -90,7 +106,13 @@ pub fn analyze_file(
     target_exceptions: &Vec<crate::Exception>,
 ) {
     let (event_sender, event_receiver) = unbounded();
-    analyze_file_with_gaps(db, &event_sender, file, target_exceptions);
+    analyze_file_with_gaps(
+        db,
+        &event_sender,
+        file,
+        target_exceptions,
+        &AnalysisOptions::default(),
+    );
     drop(event_sender);
     for event in event_receiver {
         if let AnalysisEvent::Diagnostic(diagnostic) = event {
@@ -104,6 +126,7 @@ fn analyze_file_with_gaps(
     sender: &Sender<AnalysisEvent>,
     file: File,
     target_exceptions: &Vec<crate::Exception>,
+    options: &AnalysisOptions,
 ) {
     let module = parsed_module(db, file);
     let module_ref = module.load(db);
@@ -121,7 +144,7 @@ fn analyze_file_with_gaps(
     module_collector.init(&module_ref);
 
     for func_def in module_collector.list_functions() {
-        let analysis = get_transitive_analysis(
+        let mut analysis = get_transitive_analysis(
             db,
             file,
             func_def,
@@ -129,7 +152,24 @@ fn analyze_file_with_gaps(
             CallStack::new(),
             &ExceptionCaptureStack::new(),
         );
-        let diagnostics = compare_documented_exceptions(db, file, func_def, &analysis.errors);
+        let extension_documented_errors = if options.extension_enabled(AnalysisExtension::Fastapi) {
+            analysis = extension::fastapi::apply_dependency_injection(
+                db,
+                file,
+                func_def,
+                target_exceptions,
+                analysis,
+            );
+            extension::fastapi::documented_exceptions(db, file, func_def)
+        } else {
+            vec![]
+        };
+        let diagnostics = compare_documented_exceptions(
+            file,
+            func_def,
+            &analysis.errors,
+            extension_documented_errors,
+        );
         for diagnostic in diagnostics {
             sender.send(AnalysisEvent::Diagnostic(diagnostic)).unwrap();
         }

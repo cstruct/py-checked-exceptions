@@ -1,6 +1,6 @@
 # py-checked-exceptions
 
-A static analyzer that enforces exception documentation in Python code. It verifies that all raised exceptions are documented in Google-style docstrings or FastAPI route response models, and flags docstring exceptions that are never actually raised. Built upon the excellent foundation provided by [Ruff and Ty](https://github.com/astral-sh/ruff).
+A static analyzer that enforces exception documentation in Python code. It verifies that all raised exceptions are documented in Google-style docstrings and flags docstring exceptions that are never actually raised. Optional extensions add framework-specific behavior. Built upon the excellent foundation provided by [Ruff and Ty](https://github.com/astral-sh/ruff).
 
 ![](./demo.gif)
 
@@ -45,6 +45,12 @@ Options:
 
       --target-exceptions <FILTER>
           Set base exceptions to target when analyzing
+
+      --extension <EXTENSION>
+          Enable an analysis extension (can be passed multiple times)
+
+          Possible values:
+          - fastapi: Model FastAPI response documentation and dependency injection
 
       --python <PATH>
           Path to the Python environment.
@@ -110,6 +116,20 @@ File selection:
           Supports patterns like `tests/`, `*.tmp`, `**/__pycache__/**`.
 ```
 
+## FastAPI extension
+
+Enable FastAPI-specific analysis with `--extension fastapi`. The extension:
+
+- Treats models in route `responses` dictionaries as exception documentation
+- Propagates exceptions from `Depends(...)` and `Security(...)` parameter dependencies
+- Supports dependencies declared through `Annotated`
+- Supports route-level `dependencies=[Depends(...)]`
+- Follows nested injected dependencies
+- Resolves assignment-style and PEP 695 `type` aliases for `Annotated` dependencies
+- Follows dependency factories and callable dependency objects
+
+FastAPI behavior is disabled unless the extension is explicitly enabled.
+
 ## Known Limitations
 
 Use `--show-analysis-gaps` to print a summary of code the analyzer could not fully model, or
@@ -122,6 +142,7 @@ This tool currently doesn't support:
 - Dynamically determined `__(a)exit__` suppression
 - Docstring formats other than Google style
 - Dynamic exception types
+- FastAPI application-, router-, and `include_router`-level dependencies
 
 ## Future Work
 

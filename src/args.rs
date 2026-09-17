@@ -7,6 +7,7 @@ use ty_project::metadata::{
 };
 
 use crate::logging::Verbosity;
+use py_checked_exceptions::AnalysisExtension;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -47,6 +48,10 @@ pub(crate) struct CheckCommand {
     /// Set base exceptions to target when analyzing.
     #[arg(long, value_name = "FILTER")]
     pub(crate) target_exceptions: Vec<String>,
+
+    /// Enable an analysis extension (can be passed multiple times).
+    #[arg(long = "extension", value_name = "EXTENSION")]
+    pub(crate) extensions: Vec<AnalysisExtension>,
 
     /// Path to the Python environment.
     ///
@@ -209,7 +214,7 @@ pub(crate) enum TerminalColor {
 mod tests {
     use clap::Parser;
 
-    use super::{AnalysisGapOutput, Cli, Command};
+    use super::{AnalysisExtension, AnalysisGapOutput, Cli, Command};
 
     #[test]
     fn analysis_gap_output_is_opt_in() {
@@ -236,5 +241,13 @@ mod tests {
         .unwrap();
         let Command::Check(check) = cli.command;
         assert_eq!(check.analysis_gaps, Some(AnalysisGapOutput::Full));
+    }
+
+    #[test]
+    fn accepts_fastapi_extension() {
+        let cli = Cli::try_parse_from(["py-checked-exceptions", "check", "--extension", "fastapi"])
+            .unwrap();
+        let Command::Check(check) = cli.command;
+        assert_eq!(check.extensions, vec![AnalysisExtension::Fastapi]);
     }
 }

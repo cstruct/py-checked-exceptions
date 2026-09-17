@@ -6,30 +6,26 @@ use ruff_db::{
     files::{File, FileRange},
 };
 use ruff_linter::docstrings::extraction::docstring_from;
-use ruff_python_ast::{Expr, Operator, Stmt, StmtFunctionDef};
+use ruff_python_ast::{Stmt, StmtFunctionDef};
 use ruff_text_size::{Ranged, TextRange, TextSize};
-use ty_project::Db;
 
-use crate::transitive_error::exception::{
-    canonical_exception_expression, canonical_exception_name,
-};
+use crate::transitive_error::exception::canonical_exception_name;
 use crate::transitive_error::raise::FunctionRaise;
 
 pub fn compare_documented_exceptions(
-    db: &dyn Db,
     file: File,
     function: &StmtFunctionDef,
     errors: &[FunctionRaise],
+    extension_documented_errors: Vec<(TextRange, String)>,
 ) -> Vec<Diagnostic> {
     let documented_docstring_errors = documented_docstring_exceptions(&function.body);
-    let documented_fastapi_errors = documented_fastapi_response_models(db, file, function);
     let documented_errors = documented_docstring_errors
         .iter()
-        .chain(&documented_fastapi_errors)
+        .chain(&extension_documented_errors)
         .cloned()
         .collect_vec();
 
-    let errors: HashSet<_> = errors.iter().collect();
+    let errors = errors.iter().collect_vec();
 
     let (undocumented_errors, _) = difference_by_key(
         errors.iter().copied(),
@@ -37,9 +33,9 @@ pub fn compare_documented_exceptions(
         |e| canonical_exception_name(&e.name().name),
         |(_, e)| canonical_exception_name(e),
     );
-    // A FastAPI response can be emitted by framework or middleware code that isn't visible from
-    // the route body. Only explicitly documented docstring errors are therefore checked for
-    // extras.
+    // Extension-provided errors can be emitted by framework or middleware code that isn't visible
+    // from the function body. Only explicitly documented docstring errors are therefore checked
+    // for extras.
     let (_, extra_documented_errors) = difference_by_key(
         errors.into_iter(),
         documented_docstring_errors.into_iter(),
@@ -110,123 +106,6 @@ fn documented_docstring_exceptions(stmts: &[Stmt]) -> Vec<(TextRange, String)> {
             },
         );
     error_names.into_iter().collect()
-}
-
-fn documented_fastapi_response_models(
-    db: &dyn Db,
-    file: File,
-    function: &StmtFunctionDef,
-) -> Vec<(TextRange, String)> {
-    function
-        .decorator_list
-        .iter()
-        .filter_map(|decorator| {
-            let Expr::Call(call) = &decorator.expression else {
-                return None;
-            };
-            is_fastapi_route_decorator(&call.func)
-                .then(|| call.arguments.find_keyword("responses"))
-                .flatten()
-        })
-        .filter_map(|responses| responses.value.as_dict_expr())
-        .flat_map(|responses| responses.iter_values())
-        .filter_map(Expr::as_dict_expr)
-        .flat_map(|response| response.iter())
-        .filter(|item| {
-            item.key.as_ref().is_some_and(|key| {
-                key.as_string_literal_expr()
-                    .is_some_and(|key| key.value.to_str() == "model")
-            })
-        })
-        .flat_map(|item| response_model_names(db, file, &item.value))
-        .collect()
-}
-
-fn is_fastapi_route_decorator(expression: &Expr) -> bool {
-    const ROUTE_METHODS: [&str; 9] = [
-        "api_route",
-        "delete",
-        "get",
-        "head",
-        "options",
-        "patch",
-        "post",
-        "put",
-        "trace",
-    ];
-
-    expression
-        .as_attribute_expr()
-        .is_some_and(|attribute| ROUTE_METHODS.contains(&attribute.attr.as_str()))
-}
-
-fn response_model_names(db: &dyn Db, file: File, expression: &Expr) -> Vec<(TextRange, String)> {
-    match expression {
-        Expr::BinOp(binary) if binary.op == Operator::BitOr => {
-            let mut names = response_model_names(db, file, &binary.left);
-            names.extend(response_model_names(db, file, &binary.right));
-            names
-        }
-        Expr::Subscript(subscript) if is_union_type(&subscript.value) => {
-            match subscript.slice.as_ref() {
-                Expr::Tuple(tuple) => tuple
-                    .elts
-                    .iter()
-                    .flat_map(|element| response_model_names(db, file, element))
-                    .collect(),
-                slice => response_model_names(db, file, slice),
-            }
-        }
-        Expr::Subscript(subscript) if is_annotated_type(&subscript.value) => {
-            match subscript.slice.as_ref() {
-                Expr::Tuple(tuple) => tuple
-                    .elts
-                    .first()
-                    .map(|element| response_model_names(db, file, element))
-                    .unwrap_or_default(),
-                slice => response_model_names(db, file, slice),
-            }
-        }
-        Expr::Subscript(subscript) => response_model_name(&subscript.value)
-            .map(|(base_range, base)| {
-                vec![
-                    (base_range, base.clone()),
-                    (
-                        subscript.range,
-                        format!(
-                            "{base}[{}]",
-                            canonical_exception_expression(db, file, &subscript.slice)
-                        ),
-                    ),
-                ]
-            })
-            .unwrap_or_default(),
-        _ => response_model_name(expression).into_iter().collect(),
-    }
-}
-
-fn response_model_name(expression: &Expr) -> Option<(TextRange, String)> {
-    match expression {
-        Expr::Name(name) => Some((name.range, name.id.to_string())),
-        Expr::Attribute(attribute) => Some((attribute.attr.range, attribute.attr.to_string())),
-        _ => None,
-    }
-}
-
-fn is_union_type(expression: &Expr) -> bool {
-    type_name(expression).is_some_and(|name| name == "Union")
-}
-
-fn is_annotated_type(expression: &Expr) -> bool {
-    type_name(expression).is_some_and(|name| name == "Annotated")
-}
-
-fn type_name(expression: &Expr) -> Option<&str> {
-    match expression {
-        Expr::Name(name) => Some(name.id.as_str()),
-        Expr::Attribute(attribute) => Some(attribute.attr.as_str()),
-        _ => None,
-    }
 }
 
 fn count_whitespace_chars_at_start(input: &str) -> usize {

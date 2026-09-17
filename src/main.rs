@@ -3,7 +3,8 @@ use clap::Parser;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use py_checked_exceptions::{
-    AnalysisEvent, AnalysisGap, analyze_project_with_gaps, resolve_absolute_module_path,
+    AnalysisEvent, AnalysisGap, AnalysisOptions, analyze_project_with_options,
+    resolve_absolute_module_path,
 };
 use rayon::ThreadPoolBuilder;
 use ruff_db::{
@@ -92,7 +93,9 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
         .map(|path| resolve_absolute_module_path(&db, &path))
         .collect();
 
-    let events = analyze_project_with_gaps(db.clone(), target_exceptions, Some(&PB))?;
+    let analysis_options = AnalysisOptions::default().with_extensions(check.extensions);
+    let events =
+        analyze_project_with_options(db.clone(), target_exceptions, Some(&PB), analysis_options)?;
     let mut diagnostics = Vec::new();
     let mut gaps = Vec::new();
     for event in events {

@@ -4,8 +4,8 @@ use std::env::current_dir;
 
 use itertools::{EitherOrBoth, Itertools};
 use py_checked_exceptions::{
-    AnalysisEvent, AnalysisGapKind, analyze_project, analyze_project_with_gaps,
-    resolve_absolute_module_path,
+    AnalysisEvent, AnalysisExtension, AnalysisGapKind, AnalysisOptions, analyze_project,
+    analyze_project_with_gaps, analyze_project_with_options, resolve_absolute_module_path,
 };
 use ruff_db::{
     diagnostic::Diagnostic,
@@ -128,14 +128,114 @@ fn test_docstrings() -> Result<()> {
 
 #[test]
 fn test_fastapi_response_models() -> Result<()> {
-    assert_diagnostics(
+    assert_diagnostics_with_options(
         "fastapi.py",
         None,
+        AnalysisOptions::default().with_extension(AnalysisExtension::Fastapi),
         vec![
             ("Raises undocumented error DirectError", (76, 5), (76, 24)),
             ("Raises undocumented error DirectError", (85, 5), (85, 24)),
         ],
     )
+}
+
+#[test]
+fn test_fastapi_response_models_require_extension() -> Result<()> {
+    assert_diagnostics(
+        "fastapi.py",
+        None,
+        vec![
+            ("Raises undocumented error DirectError", (37, 5), (37, 24)),
+            ("Raises undocumented error GenericError", (46, 9), (46, 29)),
+            ("Raises undocumented error UnionError", (47, 5), (47, 23)),
+            ("Raises undocumented error DirectError", (59, 9), (59, 28)),
+            ("Raises undocumented error GenericError", (62, 5), (62, 25)),
+            ("Raises undocumented error UnionError", (61, 9), (61, 27)),
+            ("Raises undocumented error DirectError", (76, 5), (76, 24)),
+            ("Raises undocumented error DirectError", (85, 5), (85, 24)),
+        ],
+    )
+}
+
+#[test]
+fn test_fastapi_dependencies() -> Result<()> {
+    assert_diagnostics_with_options(
+        "fastapi_dependencies.py",
+        None,
+        AnalysisOptions::default().with_extension(AnalysisExtension::Fastapi),
+        vec![
+            (
+                "Raises undocumented error DependencyError",
+                (59, 38),
+                (59, 48),
+            ),
+            (
+                "Raises undocumented error DependencyError",
+                (64, 56),
+                (64, 66),
+            ),
+            (
+                "Raises undocumented error DependencyError",
+                (68, 49),
+                (68, 59),
+            ),
+            (
+                "Raises undocumented error SecurityError",
+                (74, 45),
+                (74, 64),
+            ),
+            (
+                "Raises undocumented error DependencyError",
+                (79, 26),
+                (79, 43),
+            ),
+            (
+                "Raises undocumented error DependencyError",
+                (95, 31),
+                (95, 46),
+            ),
+            (
+                "Raises undocumented error FactoryError",
+                (117, 39),
+                (117, 59),
+            ),
+            (
+                "Raises undocumented error DependencyError",
+                (134, 39),
+                (134, 60),
+            ),
+        ],
+    )
+}
+
+#[test]
+fn test_fastapi_dynamic_dependencies_report_gap() -> Result<()> {
+    let project_path = SystemPathBuf::from_path_buf(current_dir()?)
+        .unwrap()
+        .join("tests/fixtures");
+    let filter_path = project_path.join("fastapi_dependencies.py");
+    let system = OsSystem::new(&project_path);
+    let mut project_metadata =
+        ProjectMetadata::discover(SystemPath::new(project_path.as_str()), &system)?;
+    project_metadata.apply_configuration_files(&system)?;
+    let mut db = ProjectDatabase::new(project_metadata, system)?;
+    db.project().set_included_paths(&mut db, vec![filter_path]);
+
+    let gaps = analyze_project_with_options(
+        db,
+        vec![],
+        None,
+        AnalysisOptions::default().with_extension(AnalysisExtension::Fastapi),
+    )?
+    .filter_map(|event| match event {
+        AnalysisEvent::Diagnostic(_) => None,
+        AnalysisEvent::Gap(gap) => Some(gap),
+    })
+    .collect::<Vec<_>>();
+
+    assert_eq!(gaps.len(), 1);
+    assert_eq!(gaps[0].kind(), AnalysisGapKind::UnsupportedCallback);
+    Ok(())
 }
 
 #[test]
@@ -345,9 +445,10 @@ fn test_analysis_gaps() -> Result<()> {
 
 #[test]
 fn test_generic_exceptions() -> Result<()> {
-    assert_diagnostics(
+    assert_diagnostics_with_options(
         "generic_exceptions.py",
         Some("generic_exceptions.NotFoundError".into()),
+        AnalysisOptions::default().with_extension(AnalysisExtension::Fastapi),
         vec![
             (
                 "Raises undocumented error NotFoundError[User]",
@@ -375,6 +476,20 @@ fn assert_diagnostics(
     target_exception: Option<String>,
     expected_diagnostics: Vec<ExpectedDiagnostic<'_>>,
 ) -> Result<()> {
+    assert_diagnostics_with_options(
+        test_file,
+        target_exception,
+        AnalysisOptions::default(),
+        expected_diagnostics,
+    )
+}
+
+fn assert_diagnostics_with_options(
+    test_file: &str,
+    target_exception: Option<String>,
+    options: AnalysisOptions,
+    expected_diagnostics: Vec<ExpectedDiagnostic<'_>>,
+) -> Result<()> {
     let project_path = SystemPathBuf::from_path_buf(current_dir()?)
         .unwrap()
         .join("tests/fixtures");
@@ -391,7 +506,16 @@ fn assert_diagnostics(
         .iter()
         .map(|e| resolve_absolute_module_path(&db, e))
         .collect::<Vec<_>>();
-    let diagnostics: Vec<Diagnostic> = analyze_project(db, target_exceptions, None)?.collect();
+    let diagnostics: Vec<Diagnostic> = if options == AnalysisOptions::default() {
+        analyze_project(db, target_exceptions, None)?.collect()
+    } else {
+        analyze_project_with_options(db, target_exceptions, None, options)?
+            .filter_map(|event| match event {
+                AnalysisEvent::Diagnostic(diagnostic) => Some(diagnostic),
+                AnalysisEvent::Gap(_) => None,
+            })
+            .collect()
+    };
 
     let expected_file = File::new(&db2, FilePath::System(project_path2.join(test_file)));
     let source = source_text(&db2, expected_file);
