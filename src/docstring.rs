@@ -5,9 +5,9 @@ use ruff_db::{
     diagnostic::{Annotation, Diagnostic, DiagnosticId, LintName, Severity, Span},
     files::{File, FileRange},
 };
-use ruff_linter::docstrings::extraction::docstring_from;
 use ruff_python_ast::{Stmt, StmtFunctionDef};
 use ruff_text_size::{Ranged, TextRange, TextSize};
+use ty_python_core::definition::docstring_from_body;
 
 use crate::transitive_error::exception::canonical_exception_name;
 use crate::transitive_error::raise::FunctionRaise;
@@ -63,7 +63,7 @@ pub fn compare_documented_exceptions(
 }
 
 fn documented_docstring_exceptions(stmts: &[Stmt]) -> Vec<(TextRange, String)> {
-    let Some(docstring) = docstring_from(stmts) else {
+    let Some(docstring) = docstring_from_body(stmts) else {
         return Vec::new();
     };
     let lines = docstring

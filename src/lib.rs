@@ -8,11 +8,10 @@ use rayon::prelude::*;
 use ruff_db::diagnostic::Diagnostic;
 use ruff_db::files::File;
 use ruff_db::parsed::parsed_module;
-use ty_project::{Db, ProjectDatabase};
-use ty_python_semantic::ModuleName;
-use ty_python_semantic::resolve_module;
-use ty_python_semantic::semantic_index::global_scope;
-use ty_python_semantic::types::resolve_definition::find_symbol_in_scope;
+use ty_module_resolver::{ModuleName, resolve_module_confident};
+use ty_project::{Db, ProjectDatabase, SemanticDb as _};
+use ty_python_core::global_scope;
+use ty_python_semantic::types::find_symbol_in_scope;
 
 use crate::docstring::compare_documented_exceptions;
 use crate::module::ModuleCollector;
@@ -73,7 +72,7 @@ pub fn analyze_project_with_options(
     options: AnalysisOptions,
 ) -> Result<impl Iterator<Item = AnalysisEvent>> {
     let (sender, receiver) = bounded(10);
-    let files = db.project().files(&db).clone();
+    let files = db.project().files(&db).iter().collect_vec();
     if let Some(pb) = &progress_bar {
         pb.set_length(files.len() as u64);
     }
@@ -130,7 +129,7 @@ fn analyze_file_with_gaps(
     target_exceptions: &Vec<crate::Exception>,
     options: &AnalysisOptions,
 ) {
-    let module = parsed_module(db, file);
+    let module = parsed_module(db, db.program_file(file).python_file(db));
     let module_ref = module.load(db);
     module_ref.clone().errors().iter().for_each(|error| {
         sender
@@ -191,10 +190,11 @@ pub fn resolve_absolute_module_path(db: &dyn Db, path: &str) -> Exception {
     let module_components = parts[..parts.len() - 1].to_vec();
     let module_name = ModuleName::from_components(module_components)
         .expect("target exception has to be a valid module path.");
-    let module = resolve_module(db, &module_name)
+    let program = db.project().program(db);
+    let module = resolve_module_confident(db, program.resolver_environment(db), &module_name)
         .expect("target exception has to resolve to an existing module.");
     let module_file = module.file(db).unwrap();
-    let global_scope = global_scope(db, module_file);
+    let global_scope = global_scope(db, program.program_file(db, module_file));
     let definitions_in_module = find_symbol_in_scope(db, global_scope, exception_name);
     for def in definitions_in_module {
         let file = def.file(db);

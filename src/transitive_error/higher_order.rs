@@ -3,8 +3,10 @@ use ruff_db::files::{File, FilePath};
 use ruff_python_ast::{Expr, ExprCall};
 use ruff_text_size::Ranged;
 use ty_project::Db;
-use ty_python_semantic::semantic_index::definition::DefinitionKind;
-use ty_python_semantic::types::{call_signature_details, find_active_signature_from_details};
+use ty_python_core::definition::{Definition, DefinitionKind};
+use ty_python_semantic::types::ide_support::{
+    call_signature_details, find_active_signature_from_details,
+};
 use ty_python_semantic::{ResolvedDefinition, SemanticModel};
 
 use crate::{
@@ -51,7 +53,7 @@ pub(crate) fn eager_stdlib_callback_errors(
             .flat_map(|(_, errors)| {
                 errors
                     .iter()
-                    .map(|error| error.transitive(file, call.range))
+                    .map(|error| error.transitive(file, call.range()))
             })
             .collect(),
     )
@@ -71,7 +73,7 @@ pub(crate) fn callable_analysis_for_call(
     if call.arguments.is_empty() {
         return CallableAnalysis::default();
     }
-    let arguments = call.arguments.arguments_source_order().collect_vec();
+    let arguments = call.arguments.iter_source_order().collect_vec();
     // A plain name or attribute is usually data, not a callback. Avoid expensive signature
     // inference unless at least one argument resolves to an actual function-like value.
     if !arguments.iter().any(|argument| {
@@ -80,8 +82,8 @@ pub(crate) fn callable_analysis_for_call(
         return CallableAnalysis::default();
     }
 
-    let model = SemanticModel::new(db, file);
-    let signature_details = call_signature_details(db, &model, call);
+    let model = SemanticModel::new(db, db.program_file(file));
+    let signature_details = call_signature_details(&model, call);
     let Some(active_signature) = find_active_signature_from_details(&signature_details) else {
         return CallableAnalysis::default();
     };
@@ -115,8 +117,12 @@ pub(crate) fn callable_analysis_for_call(
         if analysis.errors.is_empty() {
             continue;
         }
-        for parameter_index in &mapping.parameters {
-            let Some(parameter_name) = details.parameter_names.get(*parameter_index) else {
+        for parameter in &mapping.parameters {
+            let Some(parameter_name) = details
+                .parameters
+                .get(parameter.index)
+                .map(|parameter| &parameter.name)
+            else {
                 continue;
             };
             if parameter_name.is_empty() {
@@ -230,10 +236,7 @@ fn callable_expression_analysis(
     analysis
 }
 
-fn eager_stdlib_callback_parameter(
-    db: &dyn Db,
-    definition: ty_python_semantic::semantic_index::definition::Definition<'_>,
-) -> Option<String> {
+fn eager_stdlib_callback_parameter(db: &dyn Db, definition: Definition<'_>) -> Option<String> {
     let name = definition.name(db)?;
     let FilePath::Vendored(path) = definition.file(db).path(db) else {
         return None;

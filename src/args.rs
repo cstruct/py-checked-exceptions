@@ -1,9 +1,10 @@
 use clap::Parser;
 use ruff_db::system::SystemPathBuf;
+use ruff_ranged_value::RangedValue;
 use ty_project::metadata::{
     Options,
     options::{EnvironmentOptions, SrcOptions, TerminalOptions},
-    value::{RangedValue, RelativeGlobPattern, RelativePathBuf},
+    value::{RelativeGlobPattern, RelativePathBuf},
 };
 
 use crate::logging::Verbosity;

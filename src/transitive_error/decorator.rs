@@ -76,7 +76,7 @@ pub(crate) fn apply_decorators(
             else {
                 continue;
             };
-            let module = parsed_module(db, definition_file).load(db);
+            let module = parsed_module(db, definition.python_file(db)).load(db);
             let mut collector = ModuleCollector::new();
             collector.init(&module);
             let full_range = definition.full_range(db, &module).range();

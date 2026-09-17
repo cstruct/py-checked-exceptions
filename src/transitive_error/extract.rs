@@ -1,14 +1,15 @@
 use ruff_db::{files::File, parsed::parsed_module};
-use ruff_python_ast::{ExceptHandler, Expr, ExprTuple, Stmt};
+use ruff_python_ast::{ExceptHandler, Expr, ExprName, ExprTuple, Stmt};
 use ruff_text_size::{Ranged, TextRange};
 use ty_project::Db;
+use ty_python_core::{
+    ProgramFile,
+    definition::{Definition, DefinitionKind},
+    global_scope, semantic_index,
+};
 use ty_python_semantic::{
-    ResolvedDefinition, definitions_for_attribute, definitions_for_name,
-    semantic_index::{
-        definition::{Definition, DefinitionKind},
-        global_scope, semantic_index,
-    },
-    types::resolve_definition::find_symbol_in_scope,
+    ImportAliasResolution, ResolvedDefinition, SemanticModel, definitions_for_attribute,
+    definitions_for_name, types::find_symbol_in_scope,
 };
 
 use crate::{
@@ -27,8 +28,9 @@ use crate::{
 #[allow(clippy::too_many_arguments)]
 fn extract_errors_cycle_fn<'db>(
     _db: &'db dyn Db,
-    _value: &FunctionAnalysis,
-    _count: u32,
+    _cycle: &salsa::Cycle,
+    _previous: &FunctionAnalysis,
+    value: FunctionAnalysis,
     _expr_file: File,
     _expr_range: TextRange,
     _definition_file: File,
@@ -38,13 +40,14 @@ fn extract_errors_cycle_fn<'db>(
     _exception_capture_stack: ExceptionCaptureStack,
     _analysis_options: AnalysisOptions,
     _callable_errors: CallableErrors,
-) -> salsa::CycleRecoveryAction<FunctionAnalysis> {
-    salsa::CycleRecoveryAction::Iterate
+) -> FunctionAnalysis {
+    value
 }
 
 #[allow(clippy::too_many_arguments)]
 fn extract_errors_initial<'db>(
     _db: &'db dyn Db,
+    _id: salsa::Id,
     _expr_file: File,
     _expr_range: TextRange,
     _definition_file: File,
@@ -125,7 +128,7 @@ pub(crate) fn extract_analysis<'db>(
             )],
         };
     }
-    let module = parsed_module(db, definition_file).load(db);
+    let module = parsed_module(db, definition.python_file(db)).load(db);
     let mut module_collector = ModuleCollector::new();
     module_collector.init(&module);
     let full_range = definition.full_range(db, &module);
@@ -181,7 +184,7 @@ pub fn extract_exception<'db>(
     definition: Definition<'db>,
 ) -> Option<Exception> {
     let (definition_file, definition) = resolve_alias(db, definition_file, definition)?;
-    let module = parsed_module(db, definition_file).load(db);
+    let module = parsed_module(db, definition.python_file(db)).load(db);
     let mut module_collector = ModuleCollector::new();
     module_collector.init(&module);
     let full_range = definition.full_range(db, &module);
@@ -193,7 +196,7 @@ pub fn extract_exception<'db>(
         .iter()
         .filter_map(|b| b.as_name_expr())
         .flat_map(|b| {
-            let defs = definitions_for_name(db, definition_file, b);
+            let defs = definitions_for_name_expr(db, definition_file, b);
             defs.iter()
                 .filter_map(|def| {
                     if let ResolvedDefinition::Definition(def) = def {
@@ -248,9 +251,9 @@ pub(crate) fn resolve_alias<'a>(
         if !seen.insert(def) {
             return None;
         }
-        let module = parsed_module(db, file).load(db);
+        let module = parsed_module(db, def.python_file(db)).load(db);
         let value = assignment.value(&module).as_name_expr()?;
-        let inner_def = definitions_for_name(db, file, value)
+        let inner_def = definitions_for_name_expr(db, file, value)
             .into_iter()
             .find_map(|resolved| match resolved {
                 ResolvedDefinition::Definition(definition) => Some(definition),
@@ -274,8 +277,8 @@ pub(crate) fn try_extract_exception_from_expr(
     }
 
     let defs = match *expr {
-        Expr::Name(ref name) => definitions_for_name(db, file, name),
-        Expr::Attribute(ref attr) => definitions_for_attribute(db, file, attr),
+        Expr::Name(ref name) => definitions_for_name_expr(db, file, name),
+        Expr::Attribute(ref attr) => definitions_for_attribute_expr(db, file, attr),
         _ => return None,
     };
 
@@ -301,14 +304,14 @@ pub(crate) fn definitions_for_expression<'db>(
     // attributes can pull an entire dependency graph into a query and, for sufficiently dynamic
     // libraries, make the underlying Salsa query cycle or overflow its stack.
     match expression {
-        Expr::Name(name) => definitions_for_name(db, file, name),
+        Expr::Name(name) => definitions_for_name_expr(db, file, name),
         Expr::Attribute(attribute) => {
             if let Some(definitions) = module_attribute_definitions(db, file, attribute) {
                 definitions
             } else if let Some(definitions) = class_attribute_definitions(db, file, attribute) {
                 definitions
             } else {
-                definitions_for_attribute(db, file, attribute)
+                definitions_for_attribute_expr(db, file, attribute)
             }
         }
         _ => Vec::new(),
@@ -321,7 +324,7 @@ fn class_attribute_definitions<'db>(
     attribute: &ruff_python_ast::ExprAttribute,
 ) -> Option<Vec<ResolvedDefinition<'db>>> {
     let root_name = attribute_root_name(&attribute.value)?;
-    let classes = definitions_for_name(db, file, root_name)
+    let classes = definitions_for_name_expr(db, file, root_name)
         .into_iter()
         .filter_map(|definition| match definition {
             ResolvedDefinition::Definition(definition)
@@ -344,8 +347,7 @@ fn class_attribute_definitions<'db>(
         classes
             .into_iter()
             .flat_map(|definition| {
-                let definition_file = definition.file(db);
-                let module = parsed_module(db, definition_file).load(db);
+                let module = parsed_module(db, definition.python_file(db)).load(db);
                 let mut collector = ModuleCollector::new();
                 collector.init(&module);
                 let range = definition.full_range(db, &module).range();
@@ -357,7 +359,8 @@ fn class_attribute_definitions<'db>(
                     .filter(|function| function.name == attribute.attr)
                     .map(|function| {
                         ResolvedDefinition::Definition(
-                            semantic_index(db, definition_file).expect_single_definition(function),
+                            semantic_index(db, definition.program_file(db))
+                                .expect_single_definition(function),
                         )
                     })
                     .collect::<Vec<_>>()
@@ -382,7 +385,7 @@ pub(crate) fn is_opaque_module_attribute(db: &dyn Db, file: File, expression: &E
     };
     module_files_for_name(db, file, root_name).is_some_and(|modules| {
         modules.iter().any(|module| {
-            matches!(module.path(db), ruff_db::files::FilePath::System(path) if is_site_packages_path(path.as_str()))
+            matches!(module.file(db).path(db), ruff_db::files::FilePath::System(path) if is_site_packages_path(path.as_str()))
         })
     })
 }
@@ -399,7 +402,7 @@ pub(crate) fn is_opaque_call_target(db: &dyn Db, file: File, expression: &Expr) 
         .any(|definition| {
             let definition_file = match definition {
                 ResolvedDefinition::Definition(definition) => definition.file(db),
-                ResolvedDefinition::Module(file) => file,
+                ResolvedDefinition::Module(program_file) => program_file.file(db),
                 ResolvedDefinition::FileWithRange(range) => range.file(),
             };
             matches!(definition_file.path(db), ruff_db::files::FilePath::System(path) if is_site_packages_path(path.as_str()))
@@ -412,14 +415,16 @@ fn module_attribute_definitions<'db>(
     attribute: &ruff_python_ast::ExprAttribute,
 ) -> Option<Vec<ResolvedDefinition<'db>>> {
     let modules = module_files_for_attribute(db, file, attribute)?;
-    if modules
-        .iter()
-        .all(|module| matches!(module.path(db), ruff_db::files::FilePath::Vendored(_)))
-    {
+    if modules.iter().all(|module| {
+        matches!(
+            module.file(db).path(db),
+            ruff_db::files::FilePath::Vendored(_)
+        )
+    }) {
         return None;
     }
     if modules.iter().any(|module| {
-        matches!(module.path(db), ruff_db::files::FilePath::System(path) if is_site_packages_path(path.as_str()))
+        matches!(module.file(db).path(db), ruff_db::files::FilePath::System(path) if is_site_packages_path(path.as_str()))
     }) {
         // Third-party code remains available for resolving imported names and annotations, but its
         // runtime exception effects are an opaque boundary.
@@ -437,28 +442,51 @@ fn module_attribute_definitions<'db>(
     )
 }
 
-fn module_files_for_attribute(
-    db: &dyn Db,
+fn module_files_for_attribute<'db>(
+    db: &'db dyn Db,
     file: File,
     attribute: &ruff_python_ast::ExprAttribute,
-) -> Option<Vec<File>> {
+) -> Option<Vec<ProgramFile<'db>>> {
     let module_name = attribute.value.as_name_expr()?;
     module_files_for_name(db, file, module_name)
 }
 
-fn module_files_for_name(
-    db: &dyn Db,
+fn module_files_for_name<'db>(
+    db: &'db dyn Db,
     file: File,
     module_name: &ruff_python_ast::ExprName,
-) -> Option<Vec<File>> {
-    let modules = definitions_for_name(db, file, module_name)
+) -> Option<Vec<ProgramFile<'db>>> {
+    let modules = definitions_for_name_expr(db, file, module_name)
         .into_iter()
         .filter_map(|definition| match definition {
-            ResolvedDefinition::Module(file) => Some(file),
+            ResolvedDefinition::Module(program_file) => Some(program_file),
             _ => None,
         })
         .collect::<Vec<_>>();
     (!modules.is_empty()).then_some(modules)
+}
+
+fn definitions_for_name_expr<'db>(
+    db: &'db dyn Db,
+    file: File,
+    name: &ExprName,
+) -> Vec<ResolvedDefinition<'db>> {
+    let model = SemanticModel::new(db, db.program_file(file));
+    definitions_for_name(
+        &model,
+        name.id.as_str(),
+        name.into(),
+        ImportAliasResolution::ResolveAliases,
+    )
+}
+
+fn definitions_for_attribute_expr<'db>(
+    db: &'db dyn Db,
+    file: File,
+    attribute: &ruff_python_ast::ExprAttribute,
+) -> Vec<ResolvedDefinition<'db>> {
+    let model = SemanticModel::new(db, db.program_file(file));
+    definitions_for_attribute(&model, attribute)
 }
 
 fn attribute_root_name(expression: &Expr) -> Option<&ruff_python_ast::ExprName> {

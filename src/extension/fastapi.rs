@@ -3,8 +3,8 @@ use ruff_python_ast::statement_visitor::{StatementVisitor, walk_stmt};
 use ruff_python_ast::{Expr, ExprCall, Operator, Stmt, StmtFunctionDef};
 use ruff_text_size::{Ranged, TextRange};
 use ty_project::Db;
+use ty_python_core::definition::{Definition, DefinitionKind};
 use ty_python_semantic::ResolvedDefinition;
-use ty_python_semantic::semantic_index::definition::DefinitionKind;
 
 use crate::{
     AnalysisOptions,
@@ -169,7 +169,7 @@ fn aliased_annotation_has_dependency(
                 return false;
             };
             let definition_file = definition.file(db);
-            let module = parsed_module(db, definition_file).load(db);
+            let module = parsed_module(db, definition.python_file(db)).load(db);
             let value = match definition.kind(db) {
                 DefinitionKind::Assignment(assignment) => assignment.value(&module),
                 DefinitionKind::TypeAlias(type_alias) => &type_alias.node(&module).value,
@@ -397,7 +397,7 @@ fn dependency_factory_or_object_analysis(
         else {
             continue;
         };
-        let module = parsed_module(db, definition_file).load(db);
+        let module = parsed_module(db, definition.python_file(db)).load(db);
         let mut collector = ModuleCollector::new();
         collector.init(&module);
         let full_range = definition.full_range(db, &module).range();
@@ -568,7 +568,7 @@ fn aliased_annotation_dependency_analysis(
             continue;
         };
         let definition_file = definition.file(db);
-        let module = parsed_module(db, definition_file).load(db);
+        let module = parsed_module(db, definition.python_file(db)).load(db);
         let value = match definition.kind(db) {
             DefinitionKind::Assignment(assignment) => assignment.value(&module),
             DefinitionKind::TypeAlias(type_alias) => &type_alias.node(&module).value,
@@ -645,7 +645,7 @@ fn nested_dependency_analysis<'db>(
     call_file: File,
     call_range: TextRange,
     definition_file: File,
-    definition: ty_python_semantic::semantic_index::definition::Definition<'db>,
+    definition: Definition<'db>,
     target_exceptions: &Vec<Exception>,
     analysis_options: &AnalysisOptions,
     call_stack: CallStack,
@@ -653,7 +653,7 @@ fn nested_dependency_analysis<'db>(
     let Some((definition_file, definition)) = resolve_alias(db, definition_file, definition) else {
         return FunctionAnalysis::default();
     };
-    let module = parsed_module(db, definition_file).load(db);
+    let module = parsed_module(db, definition.python_file(db)).load(db);
     let mut collector = ModuleCollector::new();
     collector.init(&module);
     let full_range = definition.full_range(db, &module).range();

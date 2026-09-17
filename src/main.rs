@@ -14,9 +14,7 @@ use ruff_db::{
 };
 use std::sync::LazyLock;
 use std::{fmt::Write, process::ExitCode};
-use ty_project::{
-    Db, ProjectDatabase, ProjectMetadata, metadata::options::ProjectOptionsOverrides,
-};
+use ty_project::{Db, ProjectDatabase, ProjectMetadata, metadata::Options};
 
 use crate::{
     args::{AnalysisGapOutput, CheckCommand, Cli, Command, TerminalColor},
@@ -88,10 +86,12 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
     let printer = Printer::default().with_verbosity(verbosity);
 
     project_metadata.apply_configuration_files(&system)?;
-    project_metadata.apply_options(project_config.as_ty_options(&loaded_config.path));
-    let project_options_overrides = ProjectOptionsOverrides::new(None, check.options());
-    project_metadata.apply_overrides(&project_options_overrides);
-    let mut db = ProjectDatabase::new(project_metadata, system.clone())?;
+    let options = merge_cli_options(
+        project_config.as_ty_options(&loaded_config.path)?,
+        check.options(),
+    );
+    project_metadata.set_override_options(options);
+    let mut db = ProjectDatabase::fallible(project_metadata, system.clone())?;
 
     if !check_paths.is_empty() {
         db.project().set_included_paths(&mut db, check_paths);
@@ -150,7 +150,7 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
     });
 
     let terminal_settings = db.project().settings(&db).terminal();
-    let display_config = DisplayDiagnosticConfig::default()
+    let display_config = DisplayDiagnosticConfig::new("py-checked-exceptions")
         .format(terminal_settings.output_format.into())
         .color(colored::control::SHOULD_COLORIZE.should_colorize());
 
@@ -195,6 +195,36 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
             ExitCode::SUCCESS
         })
     }
+}
+
+fn merge_cli_options(mut options: Options, cli: Options) -> Options {
+    if let Some(cli_environment) = cli.environment {
+        let environment = options.environment.get_or_insert_default();
+        if cli_environment.python.is_some() {
+            environment.python = cli_environment.python;
+        }
+        if cli_environment.typeshed.is_some() {
+            environment.typeshed = cli_environment.typeshed;
+        }
+        if cli_environment.extra_paths.is_some() {
+            environment.extra_paths = cli_environment.extra_paths;
+        }
+    }
+    if let Some(cli_terminal) = cli.terminal
+        && cli_terminal.output_format.is_some()
+    {
+        options.terminal.get_or_insert_default().output_format = cli_terminal.output_format;
+    }
+    if let Some(cli_src) = cli.src {
+        let src = options.src.get_or_insert_default();
+        if cli_src.respect_ignore_files.is_some() {
+            src.respect_ignore_files = cli_src.respect_ignore_files;
+        }
+        if cli_src.exclude.is_some() {
+            src.exclude = cli_src.exclude;
+        }
+    }
+    options
 }
 
 fn print_analysis_gap_summary(printer: Printer, gaps: &[AnalysisGap]) -> Result<()> {

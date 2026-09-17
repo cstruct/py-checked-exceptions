@@ -3,12 +3,9 @@ use std::{io::ErrorKind, sync::Arc};
 use anyhow::{Context, Result};
 use py_checked_exceptions::{AnalysisExtension, ContextManagerEffectRule};
 use ruff_db::system::{System, SystemPath, SystemPathBuf};
+use ruff_ranged_value::ValueSource;
 use serde::Deserialize;
-use ty_project::metadata::{
-    Options,
-    options::{EnvironmentOptions, SrcOptions, TerminalOptions},
-    value::{RangedValue, RelativeGlobPattern, RelativePathBuf, ValueSource},
-};
+use ty_project::metadata::Options;
 
 use crate::args::{AnalysisGapOutput, OutputFormat, TerminalColor};
 
@@ -29,50 +26,61 @@ pub(crate) struct ProjectConfig {
 }
 
 impl ProjectConfig {
-    pub(crate) fn as_ty_options(&self, config_path: &SystemPath) -> Options {
+    pub(crate) fn as_ty_options(&self, config_path: &SystemPath) -> Result<Options> {
         let source = ValueSource::File(Arc::new(config_path.to_path_buf()));
-        Options {
-            environment: Some(EnvironmentOptions {
-                python_version: None,
-                python_platform: None,
-                python: self
-                    .python
-                    .as_ref()
-                    .map(|path| RelativePathBuf::new(path, source.clone())),
-                typeshed: self
-                    .typeshed
-                    .as_ref()
-                    .map(|path| RelativePathBuf::new(path, source.clone())),
-                extra_paths: self.extra_search_paths.as_ref().map(|paths| {
-                    paths
-                        .iter()
-                        .map(|path| RelativePathBuf::new(path, source.clone()))
-                        .collect()
-                }),
-                ..EnvironmentOptions::default()
-            }),
-            terminal: Some(TerminalOptions {
-                output_format: self
-                    .output_format
-                    .map(|format| RangedValue::new(format.into(), source.clone())),
-                error_on_warning: None,
-            }),
-            src: Some(SrcOptions {
-                respect_ignore_files: self.respect_ignore_files,
-                exclude: self.exclude.as_ref().map(|patterns| {
-                    RangedValue::new(
-                        patterns
-                            .iter()
-                            .map(|pattern| RelativeGlobPattern::new(pattern, source.clone()))
-                            .collect(),
-                        source,
-                    )
-                }),
-                ..SrcOptions::default()
-            }),
-            rules: None,
-            ..Options::default()
+        let mut root = toml::Table::new();
+
+        let mut environment = toml::Table::new();
+        if let Some(python) = &self.python {
+            environment.insert("python".into(), toml::Value::String(python.clone()));
         }
+        if let Some(typeshed) = &self.typeshed {
+            environment.insert("typeshed".into(), toml::Value::String(typeshed.clone()));
+        }
+        if let Some(paths) = &self.extra_search_paths {
+            environment.insert(
+                "extra-paths".into(),
+                toml::Value::Array(paths.iter().cloned().map(toml::Value::String).collect()),
+            );
+        }
+        if !environment.is_empty() {
+            root.insert("environment".into(), toml::Value::Table(environment));
+        }
+
+        if let Some(output_format) = self.output_format {
+            let mut terminal = toml::Table::new();
+            terminal.insert(
+                "output-format".into(),
+                toml::Value::String(
+                    match output_format {
+                        OutputFormat::Full => "full",
+                        OutputFormat::Concise => "concise",
+                    }
+                    .into(),
+                ),
+            );
+            root.insert("terminal".into(), toml::Value::Table(terminal));
+        }
+
+        let mut src = toml::Table::new();
+        if let Some(respect_ignore_files) = self.respect_ignore_files {
+            src.insert(
+                "respect-ignore-files".into(),
+                toml::Value::Boolean(respect_ignore_files),
+            );
+        }
+        if let Some(patterns) = &self.exclude {
+            src.insert(
+                "exclude".into(),
+                toml::Value::Array(patterns.iter().cloned().map(toml::Value::String).collect()),
+            );
+        }
+        if !src.is_empty() {
+            root.insert("src".into(), toml::Value::Table(src));
+        }
+
+        let content = toml::to_string(&root)?;
+        Options::from_toml_str(&content, source).map_err(Into::into)
     }
 }
 
@@ -213,20 +221,25 @@ mod tests {
             ..ProjectConfig::default()
         };
         let config_path = SystemPath::new("/project/pyproject.toml");
-        let options = config.as_ty_options(config_path);
+        let options = config.as_ty_options(config_path).unwrap();
         let environment = options.environment.unwrap();
+        let system = ruff_db::system::TestSystem::default();
+        let project_root = SystemPath::new("/project");
 
         assert_eq!(
-            environment.python.unwrap().source().file(),
-            Some(config_path)
+            environment.python.unwrap().absolute(project_root, &system),
+            SystemPathBuf::from("/project/.venv")
         );
         assert_eq!(
-            environment.typeshed.unwrap().source().file(),
-            Some(config_path)
+            environment
+                .typeshed
+                .unwrap()
+                .absolute(project_root, &system),
+            SystemPathBuf::from("/project/typings/typeshed")
         );
         assert_eq!(
-            environment.extra_paths.unwrap()[0].source().file(),
-            Some(config_path)
+            environment.extra_paths.unwrap()[0].absolute(project_root, &system),
+            SystemPathBuf::from("/project/packages/shared")
         );
     }
 }

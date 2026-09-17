@@ -10,7 +10,7 @@ use py_checked_exceptions::{
 };
 use ruff_db::{
     diagnostic::Diagnostic,
-    files::{File, FilePath},
+    files::system_path_to_file,
     source::source_text,
     system::{OsSystem, SystemPath, SystemPathBuf},
 };
@@ -228,7 +228,7 @@ fn test_fastapi_dynamic_dependencies_report_gap() -> Result<()> {
     let mut project_metadata =
         ProjectMetadata::discover(SystemPath::new(project_path.as_str()), &system)?;
     project_metadata.apply_configuration_files(&system)?;
-    let mut db = ProjectDatabase::new(project_metadata, system)?;
+    let mut db = ProjectDatabase::fallible(project_metadata, system)?;
     db.project().set_included_paths(&mut db, vec![filter_path]);
 
     let gaps = analyze_project_with_options(
@@ -469,7 +469,7 @@ fn test_analysis_gaps() -> Result<()> {
     let mut project_metadata =
         ProjectMetadata::discover(SystemPath::new(project_path.as_str()), &system)?;
     project_metadata.apply_configuration_files(&system)?;
-    let mut db = ProjectDatabase::new(project_metadata, system)?;
+    let mut db = ProjectDatabase::fallible(project_metadata, system)?;
     db.project().set_included_paths(&mut db, vec![filter_path]);
 
     let gaps = analyze_project_with_gaps(db, vec![], None)?
@@ -543,7 +543,7 @@ fn assert_diagnostics_with_options(
     let mut project_metadata =
         ProjectMetadata::discover(SystemPath::new(project_path.as_str()), &system)?;
     project_metadata.apply_configuration_files(&system)?;
-    let mut db = ProjectDatabase::new(project_metadata, system.clone())?;
+    let mut db = ProjectDatabase::fallible(project_metadata, system.clone())?;
     db.project().set_included_paths(&mut db, vec![filter_path]);
     let db2 = db.clone();
     let project_path2 = project_path.clone();
@@ -562,7 +562,7 @@ fn assert_diagnostics_with_options(
             .collect()
     };
 
-    let expected_file = File::new(&db2, FilePath::System(project_path2.join(test_file)));
+    let expected_file = system_path_to_file(&db2, project_path2.join(test_file))?;
     let source = source_text(&db2, expected_file);
     let index = LineIndex::from_source_text(&source);
 
@@ -585,7 +585,7 @@ fn assert_diagnostics_with_options(
                     .unwrap()
                     .get_span()
                     .expect_ty_file();
-                assert_eq!(diag.primary_message(), expected_msg);
+                assert_eq!(diag.headline_message(), expected_msg);
                 assert_eq!(diag_file.path(&db2), expected_file.path(&db2));
                 let range = diag
                     .primary_annotation()

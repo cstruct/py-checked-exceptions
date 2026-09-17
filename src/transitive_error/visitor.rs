@@ -490,7 +490,7 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                     AnalysisGapKind::OpaqueCall,
                     AnalysisGapImpact::MayMissErrors,
                     self.file,
-                    call.range,
+                    call.range(),
                     call.func
                         .as_attribute_expr()
                         .map(|attribute| attribute.attr.to_string()),
@@ -525,7 +525,7 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                         },
                         AnalysisGapImpact::MayMissErrors,
                         self.file,
-                        call.range,
+                        call.range(),
                         None,
                     ));
                 }
@@ -566,7 +566,7 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                                     AnalysisGapKind::OpaqueCall,
                                     AnalysisGapImpact::MayMissErrors,
                                     self.file,
-                                    call.range,
+                                    call.range(),
                                     def.name(self.db).map(|name| name.to_string()),
                                 ));
                                 continue;
@@ -580,7 +580,7 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                                     AnalysisGapKind::AnalysisCutoff,
                                     AnalysisGapImpact::MayMissErrors,
                                     self.file,
-                                    call.range,
+                                    call.range(),
                                     Some(name.to_string()),
                                 ));
                                 continue;
@@ -589,7 +589,7 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                         let transitive = extract_analysis(
                             self.db,
                             self.file,
-                            call.range,
+                            call.range(),
                             definition_file,
                             def,
                             self.target_exceptions.clone(),
@@ -613,7 +613,7 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                         AnalysisGapKind::DynamicCall,
                         AnalysisGapImpact::MayMissErrors,
                         self.file,
-                        call.range,
+                        call.range(),
                         None,
                     ));
                 }
@@ -622,7 +622,7 @@ impl<'a> Visitor<'a> for FunctionTransitiveErrorVisitor<'a> {
                     AnalysisGapKind::DynamicCall,
                     AnalysisGapImpact::MayMissErrors,
                     self.file,
-                    call.range,
+                    call.range(),
                     None,
                 ));
             }

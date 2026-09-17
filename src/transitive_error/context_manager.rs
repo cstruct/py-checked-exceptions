@@ -7,12 +7,10 @@ use ruff_python_ast::{
     statement_visitor::{StatementVisitor, walk_stmt},
 };
 use ruff_text_size::{Ranged, TextRange};
+use ty_module_resolver::{ModuleName, resolve_module_confident};
 use ty_project::Db;
-use ty_python_semantic::{
-    ModuleName, ResolvedDefinition, resolve_module,
-    semantic_index::{definition::DefinitionKind, global_scope},
-    types::resolve_definition::find_symbol_in_scope,
-};
+use ty_python_core::{definition::DefinitionKind, global_scope};
+use ty_python_semantic::{ResolvedDefinition, types::find_symbol_in_scope};
 
 use crate::{
     AnalysisOptions, ContextManagerEffect, ContextManagerEffectRule,
@@ -126,7 +124,8 @@ fn configured_function_parameter_index(
         else {
             continue;
         };
-        let range = definition.full_range(db, &parsed_module(db, definition_file).load(db));
+        let range =
+            definition.full_range(db, &parsed_module(db, definition.python_file(db)).load(db));
         if let Some((_, _, parameter_index)) = expected.iter().find(|(file, expected_range, _)| {
             *file == definition_file && *expected_range == range.range()
         }) {
@@ -148,31 +147,37 @@ fn configured_function_definitions(
     let Some(module_name) = ModuleName::from_components(components) else {
         return Vec::new();
     };
-    let Some(module) = resolve_module(db, &module_name) else {
+    let program = db.project().program(db);
+    let Some(module) = resolve_module_confident(db, program.resolver_environment(db), &module_name)
+    else {
         return Vec::new();
     };
     let Some(module_file) = module.file(db) else {
         return Vec::new();
     };
-    find_symbol_in_scope(db, global_scope(db, module_file), symbol)
-        .into_iter()
-        .filter_map(|definition| {
-            let definition_file = definition.file(db);
-            let (definition_file, definition) = resolve_alias(db, definition_file, definition)?;
-            let module = parsed_module(db, definition_file).load(db);
-            let mut collector = ModuleCollector::new();
-            collector.init(&module);
-            let range = definition.full_range(db, &module).range();
-            let function = collector.find_functions(&range).into_iter().next()?;
-            let parameter_index = function
-                .parameters
-                .posonlyargs
-                .iter()
-                .chain(&function.parameters.args)
-                .position(|candidate| candidate.name().as_str() == parameter)?;
-            Some((definition_file, range, parameter_index))
-        })
-        .collect()
+    find_symbol_in_scope(
+        db,
+        global_scope(db, program.program_file(db, module_file)),
+        symbol,
+    )
+    .into_iter()
+    .filter_map(|definition| {
+        let definition_file = definition.file(db);
+        let (definition_file, definition) = resolve_alias(db, definition_file, definition)?;
+        let module = parsed_module(db, definition.python_file(db)).load(db);
+        let mut collector = ModuleCollector::new();
+        collector.init(&module);
+        let range = definition.full_range(db, &module).range();
+        let function = collector.find_functions(&range).into_iter().next()?;
+        let parameter_index = function
+            .parameters
+            .posonlyargs
+            .iter()
+            .chain(&function.parameters.args)
+            .position(|candidate| candidate.name().as_str() == parameter)?;
+        Some((definition_file, range, parameter_index))
+    })
+    .collect()
 }
 
 #[derive(Default)]
@@ -332,7 +337,7 @@ fn collect_generator_context_manager_functions(
             continue;
         };
         let definition_file = definition.file(db);
-        let module = parsed_module(db, definition_file).load(db);
+        let module = parsed_module(db, definition.python_file(db)).load(db);
         if let DefinitionKind::Assignment(assignment) = definition.kind(db) {
             let value = assignment.value(&module);
             if matches!(value, Expr::Call(_) | Expr::Name(_) | Expr::Attribute(_)) {
@@ -351,7 +356,7 @@ fn collect_generator_context_manager_functions(
         else {
             continue;
         };
-        let module = parsed_module(db, definition_file).load(db);
+        let module = parsed_module(db, definition.python_file(db)).load(db);
         let mut collector = ModuleCollector::new();
         collector.init(&module);
         let full_range = definition.full_range(db, &module).range();
@@ -408,7 +413,7 @@ fn collect_effects(
             continue;
         };
         let definition_file = definition.file(db);
-        let module = parsed_module(db, definition_file).load(db);
+        let module = parsed_module(db, definition.python_file(db)).load(db);
         if let DefinitionKind::Assignment(assignment) = definition.kind(db) {
             let value = assignment.value(&module);
             let nested_expression = value
@@ -442,7 +447,7 @@ fn collect_effects(
         else {
             continue;
         };
-        let module = parsed_module(db, definition_file).load(db);
+        let module = parsed_module(db, definition.python_file(db)).load(db);
         let mut collector = ModuleCollector::new();
         collector.init(&module);
         let full_range = definition.full_range(db, &module).range();
