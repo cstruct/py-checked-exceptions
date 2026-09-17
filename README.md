@@ -25,6 +25,28 @@ Generic exception specializations are tracked independently. For example, an exc
 `NotFoundError[User]` must be documented as `NotFoundError[User]`, while still matching a
 `NotFoundError` target-exception filter or handler.
 
+## Configuration
+
+Project configuration can be stored in `pyproject.toml`:
+
+```toml
+[tool.py-checked-exceptions]
+target-exceptions = ["package.errors.BaseError"]
+extensions = ["fastapi"]
+python = ".venv"
+typeshed = "typings/typeshed"
+extra-search-paths = ["packages/shared"]
+output-format = "concise"
+color = "auto"
+show-analysis-gaps = "summary"
+respect-ignore-files = true
+exclude = ["generated", "tests/fixtures/**"]
+```
+
+Paths in `pyproject.toml` are relative to the project root. Command-line options take precedence
+over this section, which in turn takes precedence over overlapping settings in `[tool.ty]`.
+Positional check paths, `--project`, and verbosity remain command-line-only.
+
 ```
 Check a project for errors documenting errors
 

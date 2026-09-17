@@ -20,12 +20,14 @@ use ty_project::{
 
 use crate::{
     args::{AnalysisGapOutput, CheckCommand, Cli, Command, TerminalColor},
+    config::load_project_config,
     logging::setup_tracing,
     printer::Printer,
 };
 use py_checked_exceptions::Exception;
 
 mod args;
+mod config;
 mod logging;
 mod printer;
 
@@ -50,13 +52,6 @@ fn main() -> Result<ExitCode> {
 }
 
 fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
-    set_colored_override(check.color);
-
-    let verbosity = check.verbosity.level();
-    let _guard = setup_tracing(verbosity, check.color.unwrap_or_default())?;
-
-    let printer = Printer::default().with_verbosity(verbosity);
-
     let project_path = match check.project {
         Some(ref path) if path.is_absolute() => path.clone(),
         Some(ref path) => cwd.join(path),
@@ -72,7 +67,28 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
     let system = OsSystem::new(&project_path);
     let mut project_metadata =
         ProjectMetadata::discover(SystemPath::new(project_path.as_str()), &system)?;
+    let loaded_config = load_project_config(&system, project_metadata.root())?;
+    let project_config = &loaded_config.config;
+    let color = check.color.or(project_config.color);
+    let analysis_gaps = check.analysis_gaps.or(project_config.show_analysis_gaps);
+    let target_exception_names = if check.target_exceptions.is_empty() {
+        project_config.target_exceptions.clone().unwrap_or_default()
+    } else {
+        check.target_exceptions.clone()
+    };
+    let extensions = if check.extensions.is_empty() {
+        project_config.extensions.clone().unwrap_or_default()
+    } else {
+        check.extensions.clone()
+    };
+
+    set_colored_override(color);
+    let verbosity = check.verbosity.level();
+    let _guard = setup_tracing(verbosity, color.unwrap_or_default())?;
+    let printer = Printer::default().with_verbosity(verbosity);
+
     project_metadata.apply_configuration_files(&system)?;
+    project_metadata.apply_options(project_config.as_ty_options(&loaded_config.path));
     let project_options_overrides = ProjectOptionsOverrides::new(None, check.options());
     project_metadata.apply_overrides(&project_options_overrides);
     let mut db = ProjectDatabase::new(project_metadata, system.clone())?;
@@ -87,13 +103,12 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
     )?);
 
     // Convert string exceptions to Exception structs
-    let target_exceptions: Vec<Exception> = check
-        .target_exceptions
+    let target_exceptions: Vec<Exception> = target_exception_names
         .into_iter()
         .map(|path| resolve_absolute_module_path(&db, &path))
         .collect();
 
-    let analysis_options = AnalysisOptions::default().with_extensions(check.extensions);
+    let analysis_options = AnalysisOptions::default().with_extensions(extensions);
     let events =
         analyze_project_with_options(db.clone(), target_exceptions, Some(&PB), analysis_options)?;
     let mut diagnostics = Vec::new();
@@ -139,7 +154,7 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
             write!(stdout, "{}", diagnostic.display(&db, &display_config))?;
         }
     }
-    if matches!(check.analysis_gaps, Some(AnalysisGapOutput::Full)) && stdout.is_enabled() {
+    if matches!(analysis_gaps, Some(AnalysisGapOutput::Full)) && stdout.is_enabled() {
         for gap in &gaps {
             let diagnostic = Diagnostic::from(gap);
             write!(stdout, "{}", diagnostic.display(&db, &display_config))?;
@@ -147,7 +162,7 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
     }
     drop(stdout);
 
-    if check.analysis_gaps.is_some() {
+    if analysis_gaps.is_some() {
         print_analysis_gap_summary(printer, &gaps)?;
     }
 

@@ -1,0 +1,12 @@
+[project]
+name = "config-project"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.py-checked-exceptions]
+target-exceptions = ["errors.ConfiguredError"]
+extensions = ["fastapi"]
+extra-search-paths = ["shared"]
+output-format = "concise"
+color = "never"
+exclude = ["excluded.py"]

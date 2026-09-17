@@ -1583,6 +1583,8 @@ dependencies = [
  "ruff_source_file",
  "ruff_text_size",
  "salsa",
+ "serde",
+ "toml 0.9.5",
  "tracing",
  "tracing-flame",
  "tracing-subscriber",

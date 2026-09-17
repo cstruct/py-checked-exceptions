@@ -71,6 +71,10 @@ pub(crate) struct CheckCommand {
     #[arg(long, value_name = "PATH")]
     pub(crate) python: Option<SystemPathBuf>,
 
+    /// Custom directory to use for stdlib typeshed stubs.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) typeshed: Option<SystemPathBuf>,
+
     /// Additional path to use as a module-resolution source (can be passed multiple times).
     #[arg(long, value_name = "PATH")]
     pub(crate) extra_search_path: Option<Vec<SystemPathBuf>>,
@@ -117,7 +121,8 @@ pub(crate) struct CheckCommand {
     exclude: Option<Vec<String>>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub(crate) enum AnalysisGapOutput {
     /// Print counts grouped by the reason analysis was incomplete.
     Summary,
@@ -139,7 +144,7 @@ impl CheckCommand {
                 python_version: None,
                 python_platform: None,
                 python: self.python.clone().map(RelativePathBuf::cli),
-                typeshed: None,
+                typeshed: self.typeshed.clone().map(RelativePathBuf::cli),
                 extra_paths: self.extra_search_path.clone().map(|extra_search_paths| {
                     extra_search_paths
                         .into_iter()
@@ -168,7 +173,20 @@ impl CheckCommand {
 }
 
 /// The diagnostic output format.
-#[derive(Copy, Clone, Hash, Debug, PartialEq, Eq, PartialOrd, Ord, Default, clap::ValueEnum)]
+#[derive(
+    Copy,
+    Clone,
+    Hash,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Default,
+    clap::ValueEnum,
+    serde::Deserialize,
+)]
+#[serde(rename_all = "kebab-case")]
 pub enum OutputFormat {
     /// Print diagnostics verbosely, with context and helpful hints \[default\].
     ///
@@ -197,7 +215,20 @@ impl From<OutputFormat> for ty_project::metadata::options::OutputFormat {
 }
 
 /// Control when colored output is used.
-#[derive(Copy, Clone, Hash, Debug, PartialEq, Eq, PartialOrd, Ord, Default, clap::ValueEnum)]
+#[derive(
+    Copy,
+    Clone,
+    Hash,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Default,
+    clap::ValueEnum,
+    serde::Deserialize,
+)]
+#[serde(rename_all = "kebab-case")]
 pub(crate) enum TerminalColor {
     /// Display colors if the output goes to an interactive terminal.
     #[default]

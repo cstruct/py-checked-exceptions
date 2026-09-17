@@ -1,6 +1,7 @@
 pub(crate) mod fastapi;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, clap::ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, clap::ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum AnalysisExtension {
     /// Model FastAPI response documentation and dependency injection.
     Fastapi,

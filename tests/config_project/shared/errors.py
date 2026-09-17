@@ -1,0 +1,2 @@
+class ConfiguredError(RuntimeError):
+    pass
