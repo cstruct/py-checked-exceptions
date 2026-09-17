@@ -38,6 +38,15 @@ fn test_transitive() -> Result<()> {
 }
 
 #[test]
+fn test_cross_module_aliases() -> Result<()> {
+    assert_diagnostics(
+        "cross_module_aliases.py",
+        None,
+        vec![("Raises undocumented error AliasError", (7, 5), (7, 19))],
+    )
+}
+
+#[test]
 fn test_class() -> Result<()> {
     assert_diagnostics(
         "class.py",

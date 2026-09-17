@@ -71,9 +71,8 @@ pub(crate) fn apply_decorators(
                 continue;
             };
             let definition_file = definition.file(db);
-            let module = parsed_module(db, definition_file).load(db);
             let Some((definition_file, definition)) =
-                resolve_alias(db, &module, definition_file, definition)
+                resolve_alias(db, definition_file, definition)
             else {
                 continue;
             };

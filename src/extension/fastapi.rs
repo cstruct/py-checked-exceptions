@@ -393,9 +393,7 @@ fn dependency_factory_or_object_analysis(
             continue;
         };
         let definition_file = definition.file(db);
-        let module = parsed_module(db, definition_file).load(db);
-        let Some((definition_file, definition)) =
-            resolve_alias(db, &module, definition_file, definition)
+        let Some((definition_file, definition)) = resolve_alias(db, definition_file, definition)
         else {
             continue;
         };
@@ -652,10 +650,7 @@ fn nested_dependency_analysis<'db>(
     analysis_options: &AnalysisOptions,
     call_stack: CallStack,
 ) -> FunctionAnalysis {
-    let module = parsed_module(db, definition_file).load(db);
-    let Some((definition_file, definition)) =
-        resolve_alias(db, &module, definition_file, definition)
-    else {
+    let Some((definition_file, definition)) = resolve_alias(db, definition_file, definition) else {
         return FunctionAnalysis::default();
     };
     let module = parsed_module(db, definition_file).load(db);

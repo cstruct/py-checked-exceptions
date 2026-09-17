@@ -1,7 +1,4 @@
-use ruff_db::{
-    files::File,
-    parsed::{ParsedModuleRef, parsed_module},
-};
+use ruff_db::{files::File, parsed::parsed_module};
 use ruff_python_ast::{ExceptHandler, Expr, ExprTuple};
 use ruff_text_size::{Ranged, TextRange};
 use ty_project::Db;
@@ -71,10 +68,7 @@ pub(crate) fn extract_analysis<'db>(
     analysis_options: AnalysisOptions,
     callable_errors: CallableErrors,
 ) -> FunctionAnalysis {
-    let module = parsed_module(db, definition_file).load(db);
-    let Some((definition_file, definition)) =
-        resolve_alias(db, &module, definition_file, definition)
-    else {
+    let Some((definition_file, definition)) = resolve_alias(db, definition_file, definition) else {
         return FunctionAnalysis {
             errors: vec![],
             gaps: vec![AnalysisGap::new(
@@ -156,8 +150,7 @@ pub fn extract_exception<'db>(
     definition_file: File,
     definition: Definition<'db>,
 ) -> Option<Exception> {
-    let module = parsed_module(db, definition_file).load(db);
-    let (definition_file, definition) = resolve_alias(db, &module, definition_file, definition)?;
+    let (definition_file, definition) = resolve_alias(db, definition_file, definition)?;
     let module = parsed_module(db, definition_file).load(db);
     let mut module_collector = ModuleCollector::new();
     module_collector.init(&module);
@@ -215,21 +208,26 @@ pub(crate) fn extract_caught_exceptions(
 
 pub(crate) fn resolve_alias<'a>(
     db: &'a dyn Db,
-    module: &ParsedModuleRef,
     def_file: File,
     def: Definition<'a>,
 ) -> Option<(File, Definition<'a>)> {
     let mut file = def_file;
     let mut def = def;
-    while let DefinitionKind::Assignment(ass) = def.kind(db) {
-        let value = ass.value(module).as_name_expr()?;
-        for resolved in definitions_for_name(db, def_file, value) {
-            if let ResolvedDefinition::Definition(inner_def) = resolved {
-                file = inner_def.file(db);
-                def = inner_def;
-                break;
-            }
+    let mut seen = std::collections::HashSet::new();
+    while let DefinitionKind::Assignment(assignment) = def.kind(db) {
+        if !seen.insert(def) {
+            return None;
         }
+        let module = parsed_module(db, file).load(db);
+        let value = assignment.value(&module).as_name_expr()?;
+        let inner_def = definitions_for_name(db, file, value)
+            .into_iter()
+            .find_map(|resolved| match resolved {
+                ResolvedDefinition::Definition(definition) => Some(definition),
+                _ => None,
+            })?;
+        file = inner_def.file(db);
+        def = inner_def;
     }
     Some((file, def))
 }

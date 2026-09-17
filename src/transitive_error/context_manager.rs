@@ -123,9 +123,7 @@ fn configured_function_parameter_index(
             continue;
         };
         let definition_file = definition.file(db);
-        let module = parsed_module(db, definition_file).load(db);
-        let Some((definition_file, definition)) =
-            resolve_alias(db, &module, definition_file, definition)
+        let Some((definition_file, definition)) = resolve_alias(db, definition_file, definition)
         else {
             continue;
         };
@@ -161,9 +159,7 @@ fn configured_function_definitions(
         .into_iter()
         .filter_map(|definition| {
             let definition_file = definition.file(db);
-            let module = parsed_module(db, definition_file).load(db);
-            let (definition_file, definition) =
-                resolve_alias(db, &module, definition_file, definition)?;
+            let (definition_file, definition) = resolve_alias(db, definition_file, definition)?;
             let module = parsed_module(db, definition_file).load(db);
             let mut collector = ModuleCollector::new();
             collector.init(&module);
@@ -352,8 +348,7 @@ fn collect_generator_context_manager_functions(
             }
             continue;
         }
-        let Some((definition_file, definition)) =
-            resolve_alias(db, &module, definition_file, definition)
+        let Some((definition_file, definition)) = resolve_alias(db, definition_file, definition)
         else {
             continue;
         };
@@ -444,8 +439,7 @@ fn collect_effects(
             }
             continue;
         }
-        let Some((definition_file, definition)) =
-            resolve_alias(db, &module, definition_file, definition)
+        let Some((definition_file, definition)) = resolve_alias(db, definition_file, definition)
         else {
             continue;
         };
