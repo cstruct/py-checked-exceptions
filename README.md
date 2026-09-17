@@ -118,3 +118,9 @@ hk install
 ```
 
 This ensures all commits pass linting and tests.
+
+## LLM disclosure
+
+Large language models (LLMs) are used in the development of commits after the commit titled
+`LLMs are used after this commit`. This may include assistance with design, implementation, tests,
+documentation, and review. Maintainers review and remain responsible for all changes.
