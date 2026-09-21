@@ -1,0 +1,174 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+  # Keep in sync with ci.yml.
+  RUSTUP_TOOLCHAIN: nightly-2026-04-11
+
+jobs:
+  validate:
+    name: Validate release version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check tag against Cargo.toml
+        id: version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import tomllib
+
+          with open("Cargo.toml", "rb") as manifest:
+              version = tomllib.load(manifest)["package"]["version"]
+          tag = os.environ["TAG_NAME"]
+          if tag != f"v{version}":
+              raise SystemExit(f"Release tag {tag!r} must match Cargo.toml version v{version}")
+          prerelease = "-" in version.split("+", 1)[0]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              print(f"prerelease={str(prerelease).lower()}", file=output)
+          PY
+
+  ci:
+    name: Release checks
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: [validate, ci]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            exe_suffix: ''
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            exe_suffix: ''
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            exe_suffix: ''
+          - os: macos-15
+            target: aarch64-apple-darwin
+            exe_suffix: ''
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            exe_suffix: .exe
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ matrix.target }}
+      EXE_SUFFIX: ${{ matrix.exe_suffix }}
+      TAG_NAME: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target "$TARGET" --no-self-update
+
+      - name: Cache Cargo dependencies and build artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: release-${{ matrix.os }}-${{ matrix.target }}-${{ env.RUSTUP_TOOLCHAIN }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}
+          restore-keys: |
+            release-${{ matrix.os }}-${{ matrix.target }}-${{ env.RUSTUP_TOOLCHAIN }}-
+
+      - name: Build release binary
+        run: cargo build --locked --release --bin py-checked-exceptions --target "$TARGET"
+
+      - name: Smoke test release binary
+        run: '"target/$TARGET/release/py-checked-exceptions$EXE_SUFFIX" --help'
+
+      - name: Stage archive contents
+        run: |
+          archive="py-checked-exceptions-$TAG_NAME-$TARGET"
+          mkdir -p "dist/$archive"
+          cp "target/$TARGET/release/py-checked-exceptions$EXE_SUFFIX" "dist/$archive/"
+          cp README.md LICENSE "dist/$archive/"
+
+      - name: Package Unix binary
+        if: runner.os != 'Windows'
+        run: |
+          archive="py-checked-exceptions-$TAG_NAME-$TARGET"
+          tar -czf "dist/$archive.tar.gz" -C dist "$archive"
+
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $archive = "py-checked-exceptions-$env:TAG_NAME-$env:TARGET"
+          Compress-Archive -Path "dist/$archive" -DestinationPath "dist/$archive.zip"
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: binary-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub release
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download release archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: binary-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum -- *.tar.gz *.zip > SHA256SUMS
+
+      - name: Create release with binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG_NAME: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+        run: |
+          flags=()
+          if [[ "$PRERELEASE" == 'true' ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$TAG_NAME" dist/* \
+            --verify-tag --generate-notes --title "$TAG_NAME" "${flags[@]}"
