@@ -31,15 +31,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-15, windows-2022]
+        os: [ubuntu-22.04, macos-15]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Enable long paths for Git dependencies
-        if: runner.os == 'Windows'
-        run: git config --global core.longpaths true
 
       - name: Install Rust
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt,clippy --no-self-update

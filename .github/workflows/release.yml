@@ -64,34 +64,22 @@ jobs:
         include:
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            exe_suffix: ''
           - os: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
-            exe_suffix: ''
           - os: macos-15-intel
             target: x86_64-apple-darwin
-            exe_suffix: ''
           - os: macos-15
             target: aarch64-apple-darwin
-            exe_suffix: ''
-          - os: windows-2022
-            target: x86_64-pc-windows-msvc
-            exe_suffix: .exe
     defaults:
       run:
         shell: bash
     env:
       TARGET: ${{ matrix.target }}
-      EXE_SUFFIX: ${{ matrix.exe_suffix }}
       TAG_NAME: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Enable long paths for Git dependencies
-        if: runner.os == 'Windows'
-        run: git config --global core.longpaths true
 
       - name: Install Rust
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target "$TARGET" --no-self-update
@@ -111,35 +99,25 @@ jobs:
         run: cargo build --locked --release --bin py-checked-exceptions --target "$TARGET"
 
       - name: Smoke test release binary
-        run: '"target/$TARGET/release/py-checked-exceptions$EXE_SUFFIX" --help'
+        run: '"target/$TARGET/release/py-checked-exceptions" --help'
 
       - name: Stage archive contents
         run: |
           archive="py-checked-exceptions-$TAG_NAME-$TARGET"
           mkdir -p "dist/$archive"
-          cp "target/$TARGET/release/py-checked-exceptions$EXE_SUFFIX" "dist/$archive/"
+          cp "target/$TARGET/release/py-checked-exceptions" "dist/$archive/"
           cp README.md LICENSE "dist/$archive/"
 
-      - name: Package Unix binary
-        if: runner.os != 'Windows'
+      - name: Package binary
         run: |
           archive="py-checked-exceptions-$TAG_NAME-$TARGET"
           tar -czf "dist/$archive.tar.gz" -C dist "$archive"
-
-      - name: Package Windows binary
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $archive = "py-checked-exceptions-$env:TAG_NAME-$env:TARGET"
-          Compress-Archive -Path "dist/$archive" -DestinationPath "dist/$archive.zip"
 
       - name: Upload release archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: binary-${{ matrix.target }}
-          path: |
-            dist/*.tar.gz
-            dist/*.zip
+          path: dist/*.tar.gz
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -161,7 +139,7 @@ jobs:
 
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum -- *.tar.gz *.zip > SHA256SUMS
+        run: sha256sum -- *.tar.gz > SHA256SUMS
 
       - name: Create release with binaries
         env:

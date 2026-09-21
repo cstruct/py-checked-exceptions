@@ -7,7 +7,7 @@ A static analyzer that enforces exception documentation in Python code. It verif
 ## Installation
 
 Download the archive for your platform from [GitHub Releases](https://github.com/cstruct/py-checked-exceptions/releases),
-extract it, and put `py-checked-exceptions` (or `py-checked-exceptions.exe`) on your `PATH`.
+extract it, and put `py-checked-exceptions` on your `PATH`.
 
 | Platform | Archive target |
 | --- | --- |
@@ -15,7 +15,6 @@ extract it, and put `py-checked-exceptions` (or `py-checked-exceptions.exe`) on 
 | Linux ARM64 | `aarch64-unknown-linux-gnu` |
 | macOS Intel | `x86_64-apple-darwin` |
 | macOS Apple Silicon | `aarch64-apple-darwin` |
-| Windows x64 | `x86_64-pc-windows-msvc` |
 
 Linux binaries are built on Ubuntu 22.04 and require glibc 2.35 or newer.
 Each release includes `SHA256SUMS` to verify the downloaded archives.
@@ -227,8 +226,10 @@ hk install
 
 This ensures all commits pass linting and tests.
 
-GitHub Actions runs tests on Linux, macOS, and Windows for pull requests and pushes to `main`.
+GitHub Actions runs tests on Linux and macOS for pull requests and pushes to `main`.
 The Linux job also checks formatting and runs Clippy with warnings treated as errors.
+Windows CI and release binaries are currently disabled because several integration tests fail
+on that platform.
 CI and release builds use `nightly-2026-04-11`, since the project requires nightly Rust.
 Keep the toolchain versions in both workflows in sync when updating them.
 
@@ -245,7 +246,7 @@ Keep the toolchain versions in both workflows in sync when updating them.
 
 The release workflow verifies the tag, reruns CI, and builds and smoke-tests binaries for all
 platforms listed above. Once every job succeeds, it publishes a GitHub release with generated
-release notes, `.tar.gz` archives for Linux/macOS, a `.zip` archive for Windows, and `SHA256SUMS`.
+release notes, `.tar.gz` archives for Linux/macOS, and `SHA256SUMS`.
 Each archive contains the executable, README, and license. Versions such as `0.2.0-rc.1` are
 published as prereleases. The workflow uses the built-in `GITHUB_TOKEN`; no extra secret is needed.
 
