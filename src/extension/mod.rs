@@ -9,6 +9,30 @@ pub enum AnalysisExtension {
     Fastapi,
 }
 
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, clap::ValueEnum, serde::Deserialize, get_size2::GetSize,
+)]
+pub enum Entrypoint {
+    /// Check FastAPI route handlers while still following their transitive calls.
+    #[value(name = "fastapi:route")]
+    #[serde(rename = "fastapi:route")]
+    FastapiRoute,
+}
+
+impl Entrypoint {
+    fn required_extension(self) -> AnalysisExtension {
+        match self {
+            Self::FastapiRoute => AnalysisExtension::Fastapi,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::FastapiRoute => "fastapi:route",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Deserialize, get_size2::GetSize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ContextManagerEffect {
@@ -29,6 +53,7 @@ pub struct ContextManagerEffectRule {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, get_size2::GetSize)]
 pub struct AnalysisOptions {
     extensions: Vec<AnalysisExtension>,
+    entrypoints: Vec<Entrypoint>,
     context_manager_effects: Vec<ContextManagerEffectRule>,
 }
 
@@ -54,6 +79,36 @@ impl AnalysisOptions {
         self.extensions.contains(&extension)
     }
 
+    pub fn with_entrypoint(mut self, entrypoint: Entrypoint) -> Self {
+        if !self.entrypoints.contains(&entrypoint) {
+            self.entrypoints.push(entrypoint);
+        }
+        self
+    }
+
+    pub fn with_entrypoints(mut self, entrypoints: impl IntoIterator<Item = Entrypoint>) -> Self {
+        for entrypoint in entrypoints {
+            self = self.with_entrypoint(entrypoint);
+        }
+        self
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        for entrypoint in &self.entrypoints {
+            let required_extension = entrypoint.required_extension();
+            anyhow::ensure!(
+                self.extension_enabled(required_extension),
+                "entrypoint `{}` requires the `fastapi` extension",
+                entrypoint.name()
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn entrypoints(&self) -> &[Entrypoint] {
+        &self.entrypoints
+    }
+
     pub fn with_context_manager_effects(
         mut self,
         effects: impl IntoIterator<Item = ContextManagerEffectRule>,
@@ -66,5 +121,23 @@ impl AnalysisOptions {
         &self,
     ) -> impl Iterator<Item = &ContextManagerEffectRule> {
         self.context_manager_effects.iter()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AnalysisOptions, Entrypoint};
+
+    #[test]
+    fn fastapi_route_entrypoint_requires_fastapi_extension() {
+        let error = AnalysisOptions::default()
+            .with_entrypoint(Entrypoint::FastapiRoute)
+            .validate()
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "entrypoint `fastapi:route` requires the `fastapi` extension"
+        );
     }
 }
