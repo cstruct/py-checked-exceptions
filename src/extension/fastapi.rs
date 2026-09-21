@@ -19,6 +19,15 @@ use crate::{
     },
 };
 
+pub(crate) fn is_route(function: &StmtFunctionDef) -> bool {
+    function.decorator_list.iter().any(|decorator| {
+        decorator
+            .expression
+            .as_call_expr()
+            .is_some_and(|call| is_route_decorator(&call.func))
+    })
+}
+
 pub(crate) fn documented_exceptions(
     db: &dyn Db,
     file: File,

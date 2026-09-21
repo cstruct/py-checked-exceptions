@@ -5,7 +5,7 @@ use std::env::current_dir;
 use itertools::{EitherOrBoth, Itertools};
 use py_checked_exceptions::{
     AnalysisEvent, AnalysisExtension, AnalysisGapKind, AnalysisOptions, ContextManagerEffect,
-    ContextManagerEffectRule, analyze_project, analyze_project_with_gaps,
+    ContextManagerEffectRule, Entrypoint, analyze_project, analyze_project_with_gaps,
     analyze_project_with_options, resolve_absolute_module_path,
 };
 use ruff_db::{
@@ -164,6 +164,18 @@ fn test_fastapi_response_models_require_extension() -> Result<()> {
             ("Raises undocumented error DirectError", (76, 5), (76, 24)),
             ("Raises undocumented error DirectError", (85, 5), (85, 24)),
         ],
+    )
+}
+
+#[test]
+fn test_fastapi_route_entrypoints() -> Result<()> {
+    assert_diagnostics_with_options(
+        "fastapi_entrypoints.py",
+        None,
+        AnalysisOptions::default()
+            .with_extension(AnalysisExtension::Fastapi)
+            .with_entrypoint(Entrypoint::FastapiRoute),
+        vec![("Raises undocumented error RouteError", (22, 5), (22, 25))],
     )
 }
 

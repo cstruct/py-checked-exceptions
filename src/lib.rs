@@ -25,7 +25,7 @@ mod module;
 mod transitive_error;
 
 pub use extension::{
-    AnalysisExtension, AnalysisOptions, ContextManagerEffect, ContextManagerEffectRule,
+    AnalysisExtension, AnalysisOptions, ContextManagerEffect, ContextManagerEffectRule, Entrypoint,
 };
 pub use transitive_error::analysis::{AnalysisGap, AnalysisGapImpact, AnalysisGapKind};
 pub use transitive_error::exception::Exception;
@@ -71,6 +71,7 @@ pub fn analyze_project_with_options(
     progress_bar: Option<&'static ProgressBar>,
     options: AnalysisOptions,
 ) -> Result<impl Iterator<Item = AnalysisEvent>> {
+    options.validate()?;
     let (sender, receiver) = bounded(10);
     let files = db.project().files(&db).iter().collect_vec();
     if let Some(pb) = &progress_bar {
@@ -145,6 +146,9 @@ fn analyze_file_with_gaps(
     module_collector.init(&module_ref);
 
     for func_def in module_collector.list_functions() {
+        if !is_selected_entrypoint(options, func_def) {
+            continue;
+        }
         let mut analysis = get_transitive_analysis(
             db,
             file,
@@ -180,6 +184,22 @@ fn analyze_file_with_gaps(
             sender.send(AnalysisEvent::Gap(gap)).unwrap();
         }
     }
+}
+
+fn is_selected_entrypoint(
+    options: &AnalysisOptions,
+    function: &ruff_python_ast::StmtFunctionDef,
+) -> bool {
+    if options.entrypoints().is_empty() {
+        return true;
+    }
+
+    options
+        .entrypoints()
+        .iter()
+        .any(|entrypoint| match entrypoint {
+            Entrypoint::FastapiRoute => extension::fastapi::is_route(function),
+        })
 }
 
 pub fn resolve_absolute_module_path(db: &dyn Db, path: &str) -> Exception {

@@ -1,7 +1,7 @@
 use std::{io::ErrorKind, sync::Arc};
 
 use anyhow::{Context, Result};
-use py_checked_exceptions::{AnalysisExtension, ContextManagerEffectRule};
+use py_checked_exceptions::{AnalysisExtension, ContextManagerEffectRule, Entrypoint};
 use ruff_db::system::{System, SystemPath, SystemPathBuf};
 use ruff_ranged_value::ValueSource;
 use serde::Deserialize;
@@ -14,6 +14,7 @@ use crate::args::{AnalysisGapOutput, OutputFormat, TerminalColor};
 pub(crate) struct ProjectConfig {
     pub(crate) target_exceptions: Option<Vec<String>>,
     pub(crate) extensions: Option<Vec<AnalysisExtension>>,
+    pub(crate) entrypoints: Option<Vec<Entrypoint>>,
     pub(crate) context_manager_effects: Option<Vec<ContextManagerEffectRule>>,
     pub(crate) python: Option<String>,
     pub(crate) typeshed: Option<String>,
@@ -145,6 +146,7 @@ mod tests {
                 [tool.py-checked-exceptions]
                 target-exceptions = ["example.BaseError"]
                 extensions = ["fastapi"]
+                entrypoints = ["fastapi:route"]
                 python = ".venv"
                 typeshed = "typings/typeshed"
                 extra-search-paths = ["packages/one", "packages/two"]
@@ -173,6 +175,7 @@ mod tests {
             Some(vec!["example.BaseError".into()])
         );
         assert_eq!(config.extensions, Some(vec![AnalysisExtension::Fastapi]));
+        assert_eq!(config.entrypoints, Some(vec![Entrypoint::FastapiRoute]));
         let effects = config.context_manager_effects.unwrap();
         assert_eq!(effects.len(), 2);
         assert_eq!(effects[0].function, "example.suppress_error");

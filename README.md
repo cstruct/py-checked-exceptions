@@ -6,8 +6,24 @@ A static analyzer that enforces exception documentation in Python code. It verif
 
 ## Installation
 
+Download the archive for your platform from [GitHub Releases](https://github.com/cstruct/py-checked-exceptions/releases),
+extract it, and put `py-checked-exceptions` on your `PATH`.
+
+| Platform | Archive target |
+| --- | --- |
+| Linux x64 | `x86_64-unknown-linux-gnu` |
+| Linux ARM64 | `aarch64-unknown-linux-gnu` |
+| macOS Intel | `x86_64-apple-darwin` |
+| macOS Apple Silicon | `aarch64-apple-darwin` |
+
+Linux binaries are built on Ubuntu 22.04 and require glibc 2.35 or newer.
+Each release includes `SHA256SUMS` to verify the downloaded archives.
+
+To build from source, use nightly Rust:
+
 ```bash
-cargo install --git https://github.com/cstruct/py-checked-exceptions.git
+rustup toolchain install nightly-2026-04-11 --profile minimal
+cargo +nightly-2026-04-11 install --locked --git https://github.com/cstruct/py-checked-exceptions.git
 ```
 
 ## Usage
@@ -163,6 +179,24 @@ Enable FastAPI-specific analysis with `--extension fastapi`. The extension:
 
 FastAPI behavior is disabled unless the extension is explicitly enabled.
 
+To emit exception-documentation diagnostics only for FastAPI route handlers, select the
+extension-provided entrypoint:
+
+```bash
+py-checked-exceptions check --extension fastapi --entrypoint fastapi:route
+```
+
+The same setting can be configured in `pyproject.toml`:
+
+```toml
+[tool.py-checked-exceptions]
+extensions = ["fastapi"]
+entrypoints = ["fastapi:route"]
+```
+
+Entrypoints restrict which functions start a check. Calls made by a selected route are still
+followed transitively.
+
 ## Known Limitations
 
 Use `--show-analysis-gaps` to print a summary of code the analyzer could not fully model, or
@@ -191,6 +225,30 @@ hk install
 ```
 
 This ensures all commits pass linting and tests.
+
+GitHub Actions runs tests on Linux and macOS for pull requests and pushes to `main`.
+The Linux job also checks formatting and runs Clippy with warnings treated as errors.
+Windows CI and release binaries are currently disabled because several integration tests fail
+on that platform.
+CI and release builds use `nightly-2026-04-11`, since the project requires nightly Rust.
+Keep the toolchain versions in both workflows in sync when updating them.
+
+## Releasing
+
+1. Update the package version in `Cargo.toml` and regenerate `Cargo.lock` with `cargo check`.
+2. Commit and push the version change and wait for CI to pass.
+3. Create and push a tag matching the package version, for example:
+
+   ```bash
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+
+The release workflow verifies the tag, reruns CI, and builds and smoke-tests binaries for all
+platforms listed above. Once every job succeeds, it publishes a GitHub release with generated
+release notes, `.tar.gz` archives for Linux/macOS, and `SHA256SUMS`.
+Each archive contains the executable, README, and license. Versions such as `0.2.0-rc.1` are
+published as prereleases. The workflow uses the built-in `GITHUB_TOKEN`; no extra secret is needed.
 
 ## LLM disclosure
 
