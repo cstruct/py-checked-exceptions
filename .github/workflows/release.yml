@@ -89,6 +89,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Enable long paths for Git dependencies
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
+
       - name: Install Rust
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target "$TARGET" --no-self-update
 
