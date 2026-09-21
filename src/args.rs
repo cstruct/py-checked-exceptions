@@ -8,7 +8,7 @@ use ty_project::metadata::{
 };
 
 use crate::logging::Verbosity;
-use py_checked_exceptions::AnalysisExtension;
+use py_checked_exceptions::{AnalysisExtension, Entrypoint};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -53,6 +53,11 @@ pub(crate) struct CheckCommand {
     /// Enable an analysis extension (can be passed multiple times).
     #[arg(long = "extension", value_name = "EXTENSION")]
     pub(crate) extensions: Vec<AnalysisExtension>,
+
+    /// Restrict diagnostics to selected analysis entrypoints (can be passed multiple times).
+    /// Transitive calls from selected entrypoints are still analyzed.
+    #[arg(long = "entrypoint", value_name = "SELECTOR")]
+    pub(crate) entrypoints: Vec<Entrypoint>,
 
     /// Path to the Python environment.
     ///
@@ -246,7 +251,7 @@ pub(crate) enum TerminalColor {
 mod tests {
     use clap::Parser;
 
-    use super::{AnalysisExtension, AnalysisGapOutput, Cli, Command};
+    use super::{AnalysisExtension, AnalysisGapOutput, Cli, Command, Entrypoint};
 
     #[test]
     fn analysis_gap_output_is_opt_in() {
@@ -281,5 +286,18 @@ mod tests {
             .unwrap();
         let Command::Check(check) = cli.command;
         assert_eq!(check.extensions, vec![AnalysisExtension::Fastapi]);
+    }
+
+    #[test]
+    fn accepts_fastapi_route_entrypoint() {
+        let cli = Cli::try_parse_from([
+            "py-checked-exceptions",
+            "check",
+            "--entrypoint",
+            "fastapi:route",
+        ])
+        .unwrap();
+        let Command::Check(check) = cli.command;
+        assert_eq!(check.entrypoints, vec![Entrypoint::FastapiRoute]);
     }
 }

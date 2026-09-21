@@ -49,3 +49,13 @@ fn command_line_excludes_replace_configured_excludes() {
     assert!(stdout.contains("excluded.py:5:5: error[raise]"));
     assert!(stdout.contains("Found 2 diagnostics"));
 }
+
+#[test]
+fn command_line_entrypoint_restricts_diagnostics_to_fastapi_routes() {
+    let output = run_check(&["--entrypoint", "fastapi:route"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert!(output.status.success());
+    assert!(stdout.contains("All checks passed!"));
+    assert!(!stdout.contains("sample.py:25:5"));
+}

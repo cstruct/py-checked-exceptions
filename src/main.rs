@@ -79,6 +79,11 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
     } else {
         check.extensions.clone()
     };
+    let entrypoints = if check.entrypoints.is_empty() {
+        project_config.entrypoints.clone().unwrap_or_default()
+    } else {
+        check.entrypoints.clone()
+    };
 
     set_colored_override(color);
     let verbosity = check.verbosity.level();
@@ -97,6 +102,17 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
         db.project().set_included_paths(&mut db, check_paths);
     }
 
+    let analysis_options = AnalysisOptions::default()
+        .with_extensions(extensions)
+        .with_entrypoints(entrypoints)
+        .with_context_manager_effects(
+            project_config
+                .context_manager_effects
+                .clone()
+                .unwrap_or_default(),
+        );
+    analysis_options.validate()?;
+
     static PB: LazyLock<ProgressBar> = LazyLock::new(|| ProgressBar::new(100));
     PB.set_style(ProgressStyle::with_template(
         "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} \n({msg})",
@@ -108,14 +124,6 @@ fn check(check: CheckCommand, cwd: SystemPathBuf) -> Result<ExitCode> {
         .map(|path| resolve_absolute_module_path(&db, &path))
         .collect();
 
-    let analysis_options = AnalysisOptions::default()
-        .with_extensions(extensions)
-        .with_context_manager_effects(
-            project_config
-                .context_manager_effects
-                .clone()
-                .unwrap_or_default(),
-        );
     let events =
         analyze_project_with_options(db.clone(), target_exceptions, Some(&PB), analysis_options)?;
     let mut diagnostics = Vec::new();
